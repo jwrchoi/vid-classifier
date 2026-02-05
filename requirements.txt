@@ -1,0 +1,28 @@
+# Running Shoe Video Classifier - Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core
+streamlit>=1.28.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# PyTorch (CPU version - for GPU, install separately)
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Video processing
+opencv-python>=4.8.0
+
+# Image processing
+Pillow>=10.0.0
+
+# Feature extraction
+scipy>=1.11.0
+
+# Optional: MediaPipe for gesture/face detection
+# Uncomment if you want gesture/face analysis
+# mediapipe>=0.10.0
+
+# Optional: For audio analysis (not currently used)
+# librosa>=0.10.0
+# openai-whisper>=20231117
