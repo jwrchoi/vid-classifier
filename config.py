@@ -47,6 +47,17 @@ OUTPUT_DIR = Path("data")
 ANNOTATIONS_FILE = OUTPUT_DIR / "annotations.csv"
 
 # =============================================================================
+# GCS CONFIGURATION
+# =============================================================================
+
+# Google Cloud Storage bucket and prefix for video files
+GCS_BUCKET_NAME = "vid-classifier-db"
+GCS_VIDEO_PREFIX = "videos/"
+
+# Fixed video list for reliability testing (all coders see same 50 videos)
+VIDEO_LIST_FILE = OUTPUT_DIR / "video_list_v1.csv"
+
+# =============================================================================
 # DEVICE CONFIGURATION
 # =============================================================================
 

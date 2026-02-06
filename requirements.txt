@@ -13,6 +13,9 @@ torchvision>=0.15.0
 # Video processing
 opencv-python>=4.8.0
 
+# Cloud storage
+google-cloud-storage>=2.10.0
+
 # Image processing
 Pillow>=10.0.0
 
