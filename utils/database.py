@@ -173,8 +173,10 @@ class AnnotationDatabase:
                 'annotation_time_sec': annotation_time_sec
             }
             
-            # Check if video already annotated (update vs. insert)
-            existing_idx = df[df['video_id'] == video_id].index
+            # Check if video already annotated by this annotator (update vs. insert)
+            existing_idx = df[
+                (df['video_id'] == video_id) & (df['annotator'] == annotator)
+            ].index
             if len(existing_idx) > 0:
                 # Update existing row
                 for col, val in new_row.items():
@@ -191,23 +193,27 @@ class AnnotationDatabase:
             print(f"Error saving annotation: {e}")
             return False
     
-    def get_annotation(self, video_id: str) -> Optional[Dict]:
+    def get_annotation(self, video_id: str, annotator: str = None) -> Optional[Dict]:
         """
-        Get annotation for a specific video.
-        
+        Get annotation for a specific video, optionally filtered by annotator.
+
         Args:
             video_id: Video identifier
-            
+            annotator: If provided, only return this annotator's annotation
+
         Returns:
             Annotation dict or None if not found
         """
         try:
             df = pd.read_csv(self.annotations_file)
-            row = df[df['video_id'] == video_id]
-            
+            if annotator:
+                row = df[(df['video_id'] == video_id) & (df['annotator'] == annotator)]
+            else:
+                row = df[df['video_id'] == video_id]
+
             if len(row) == 0:
                 return None
-            
+
             return row.iloc[0].to_dict()
             
         except Exception as e:
@@ -222,28 +228,33 @@ class AnnotationDatabase:
             print(f"Error loading annotations: {e}")
             return pd.DataFrame()
     
-    def get_annotated_video_ids(self) -> set:
-        """Get set of video IDs that have been annotated."""
+    def get_annotated_video_ids(self, annotator: str = None) -> set:
+        """Get set of video IDs that have been annotated, optionally by a specific annotator."""
         try:
             df = pd.read_csv(self.annotations_file)
+            if annotator:
+                df = df[df['annotator'] == annotator]
             return set(df['video_id'].dropna().unique())
         except Exception:
             return set()
     
-    def get_annotation_stats(self) -> Dict:
-        """Get annotation statistics."""
+    def get_annotation_stats(self, annotator: str = None) -> Dict:
+        """Get annotation statistics, optionally filtered to a single annotator."""
         try:
             df = pd.read_csv(self.annotations_file)
-            
+
+            if annotator:
+                df = df[df['annotator'] == annotator]
+
             total = len(df)
-            
+
             if total == 0:
                 return {
                     'total_annotated': 0,
                     'annotators': [],
                     'difficult_count': 0
                 }
-            
+
             return {
                 'total_annotated': total,
                 'annotators': df['annotator'].unique().tolist(),

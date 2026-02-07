@@ -266,7 +266,9 @@ def render_sidebar():
             # Get count of annotated videos from database
             annotated = 0
             if st.session_state.db:
-                stats = st.session_state.db.get_annotation_stats()
+                stats = st.session_state.db.get_annotation_stats(
+                    annotator=st.session_state.annotator_name
+                )
                 annotated = stats.get('total_annotated', 0)
 
             st.subheader("Progress")
@@ -355,11 +357,13 @@ def render_annotation_form(video_id: str, predictions: dict):
     st.subheader("📝 Your Annotation")
 
     # =========================================================================
-    # Load existing annotation if video was already annotated
+    # Load existing annotation if video was already annotated by this coder
     # =========================================================================
     existing = None
     if st.session_state.db:
-        existing = st.session_state.db.get_annotation(video_id)
+        existing = st.session_state.db.get_annotation(
+            video_id, annotator=st.session_state.annotator_name
+        )
 
     # Start timing how long the annotation takes
     if st.session_state.annotation_start_time is None:
@@ -687,6 +691,15 @@ def main():
         ensure_output_dir()
         st.session_state.db = AnnotationDatabase(OUTPUT_DIR)
 
+        # Resume: jump coder to their first unannotated video
+        annotated_ids = st.session_state.db.get_annotated_video_ids(
+            annotator=st.session_state.annotator_name
+        )
+        for i, v in enumerate(videos):
+            if v['video_id'] not in annotated_ids:
+                st.session_state.current_video_idx = i
+                break
+
         # Mark initialization as complete
         st.session_state.initialized = True
         st.rerun()
@@ -718,11 +731,13 @@ def main():
         st.subheader(f"Video #{st.session_state.current_video_idx + 1}")
         st.caption(f"File: {current_video['filename']}")
 
-        # Check if already annotated
+        # Check if already annotated by this coder
         if st.session_state.db:
-            existing = st.session_state.db.get_annotation(video_id)
+            existing = st.session_state.db.get_annotation(
+                video_id, annotator=st.session_state.annotator_name
+            )
             if existing:
-                st.success(f"Previously annotated by: {existing.get('annotator', 'Unknown')}")
+                st.success("You have already annotated this video.")
 
         render_video_player(gcs_path)
 
