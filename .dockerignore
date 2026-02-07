@@ -1,0 +1,8 @@
+venv/
+.git/
+*.pth
+*.mp4
+__pycache__/
+.DS_Store
+data/annotations.csv
+.claude/

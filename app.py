@@ -45,7 +45,11 @@ from config import (
 from utils.video_processing import extract_video_id  # Extract ID from filename
 from utils.gcs import fetch_video_bytes              # Stream video bytes from GCS
 from utils.database import AnnotationDatabase        # CSV-based annotation storage
-from models.model_loader import ModelLoader          # Load and run ResNet models
+
+try:
+    from models.model_loader import ModelLoader      # Load and run ResNet models
+except ImportError:
+    ModelLoader = None
 
 # =============================================================================
 # STREAMLIT PAGE CONFIGURATION
@@ -229,6 +233,20 @@ def render_sidebar():
     - Jump to specific video number
     - Link to coding instructions
     """
+    # Make the sidebar collapse (X) button always visible when the sidebar is open.
+    # Placed here (not at top level) to avoid interfering with initial_sidebar_state.
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"][aria-expanded="true"] [data-testid="stSidebarCollapseButton"] {
+            opacity: 1 !important;
+            visibility: visible !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     with st.sidebar:
         # =====================================================================
         # Header
@@ -378,79 +396,65 @@ def render_annotation_form(video_id: str, predictions: dict):
         # ---------------------------------------------------------------------
         st.markdown("### Step 2: Code the Video")
 
-        # Create two columns for the annotation options
-        col_left, col_right = st.columns(2)
+        # ---------------------------------------------------------------------
+        # PERSPECTIVE (POV)
+        # ---------------------------------------------------------------------
+        st.markdown("**Perspective (Point of View)**")
+
+        st.caption(
+            "• **1st person**: Camera shows YOUR perspective (hands visible, POV shot)\n"
+            "• **2nd person**: Subject talks TO YOU (eye contact, direct address)\n"
+            "• **3rd person**: You're watching others (documentary style, no direct address)\n"
+            "• **NA**: Cannot determine or doesn't apply"
+        )
+
+        perspective_opts = ['1st person', '2nd person', '3rd person', 'NA']
+
+        default_p = 0
+        if existing and existing.get('perspective'):
+            try:
+                default_p = perspective_opts.index(existing['perspective'])
+            except ValueError:
+                pass
+
+        perspective = st.radio(
+            "Select perspective:",
+            perspective_opts,
+            index=default_p,
+            label_visibility="collapsed"
+        )
 
         # ---------------------------------------------------------------------
-        # PERSPECTIVE (POV) - Left Column
+        # SOCIAL DISTANCE
         # ---------------------------------------------------------------------
-        with col_left:
-            st.markdown("**Perspective (Point of View)**")
+        st.markdown("**Social Distance (Camera Proximity)**")
 
-            # Help text explaining each option
+        if no_human_visible:
+            st.info("↳ Automatically set to NA (no human visible)")
+            distance = "NA"
+        else:
             st.caption(
-                "• **1st person**: Camera shows YOUR perspective (hands visible, POV shot)\n"
-                "• **2nd person**: Subject talks TO YOU (eye contact, direct address)\n"
-                "• **3rd person**: You're watching others (documentary style, no direct address)\n"
+                "• **Personal**: Close-up, face fills frame, intimate feeling\n"
+                "• **Social**: Conversational distance, head-and-shoulders\n"
+                "• **Public**: Wide shot, full body, formal/distant feeling\n"
                 "• **NA**: Cannot determine or doesn't apply"
             )
 
-            # Perspective options
-            perspective_opts = ['1st person', '2nd person', '3rd person', 'NA']
+            distance_opts = ['Personal', 'Social', 'Public', 'NA']
 
-            # Determine default selection
-            default_p = 0  # Default to first option
-            if existing and existing.get('perspective'):
+            default_d = 0
+            if existing and existing.get('distance'):
                 try:
-                    default_p = perspective_opts.index(existing['perspective'])
+                    default_d = distance_opts.index(existing['distance'])
                 except ValueError:
-                    pass  # Keep default if not found
+                    pass
 
-            # Radio buttons for perspective selection
-            perspective = st.radio(
-                "Select perspective:",
-                perspective_opts,
-                index=default_p,
-                label_visibility="collapsed"  # Hide the label (we have our own header)
+            distance = st.radio(
+                "Select distance:",
+                distance_opts,
+                index=default_d,
+                label_visibility="collapsed"
             )
-
-        # ---------------------------------------------------------------------
-        # SOCIAL DISTANCE - Right Column
-        # ---------------------------------------------------------------------
-        with col_right:
-            st.markdown("**Social Distance (Camera Proximity)**")
-
-            # If no human visible, distance is automatically NA
-            if no_human_visible:
-                st.info("↳ Automatically set to NA (no human visible)")
-                distance = "NA"
-            else:
-                # Help text explaining each option
-                st.caption(
-                    "• **Personal**: Close-up, face fills frame, intimate feeling\n"
-                    "• **Social**: Conversational distance, head-and-shoulders\n"
-                    "• **Public**: Wide shot, full body, formal/distant feeling\n"
-                    "• **NA**: Cannot determine or doesn't apply"
-                )
-
-                # Distance options
-                distance_opts = ['Personal', 'Social', 'Public', 'NA']
-
-                # Determine default selection
-                default_d = 0
-                if existing and existing.get('distance'):
-                    try:
-                        default_d = distance_opts.index(existing['distance'])
-                    except ValueError:
-                        pass
-
-                # Radio buttons for distance selection
-                distance = st.radio(
-                    "Select distance:",
-                    distance_opts,
-                    index=default_d,
-                    label_visibility="collapsed"
-                )
 
         st.divider()
 
@@ -659,14 +663,15 @@ def main():
     if not st.session_state.initialized:
 
         # Load models (runs in background, predictions NOT shown to users)
-        with st.spinner("Loading models..."):
-            loader, error = load_models()
-            if error:
-                # Models are optional - app works without them
-                st.warning(f"⚠️ {error}")
-                st.info("The app will work without models. Predictions won't be saved.")
-            else:
-                st.session_state.model_loader = loader
+        if ModelLoader is not None:
+            with st.spinner("Loading models..."):
+                loader, error = load_models()
+                if error:
+                    # Models are optional - app works without them
+                    st.warning(f"⚠️ {error}")
+                    st.info("The app will work without models. Predictions won't be saved.")
+                else:
+                    st.session_state.model_loader = loader
 
         # Load video list from CSV
         with st.spinner("Loading video list..."):
@@ -704,33 +709,31 @@ def main():
     gcs_path = current_video['gcs_path']
 
     # =========================================================================
-    # Page Header
+    # Side-by-side layout: Video (left) | Annotation form (right)
+    # Columns stack vertically on narrow screens automatically.
     # =========================================================================
-    st.title(f"Video #{st.session_state.current_video_idx + 1}")
-    st.caption(f"File: {current_video['filename']}")
+    video_col, form_col = st.columns([2, 3])
 
-    # Check if already annotated
-    if st.session_state.db:
-        existing = st.session_state.db.get_annotation(video_id)
-        if existing:
-            st.success(f"Previously annotated by: {existing.get('annotator', 'Unknown')}")
+    with video_col:
+        st.subheader(f"Video #{st.session_state.current_video_idx + 1}")
+        st.caption(f"File: {current_video['filename']}")
 
-    # =========================================================================
-    # Video Player (streamed from GCS)
-    # =========================================================================
-    render_video_player(gcs_path)
+        # Check if already annotated
+        if st.session_state.db:
+            existing = st.session_state.db.get_annotation(video_id)
+            if existing:
+                st.success(f"Previously annotated by: {existing.get('annotator', 'Unknown')}")
+
+        render_video_player(gcs_path)
 
     # Prefetch next video in background (warms the cache)
     if st.session_state.current_video_idx < len(st.session_state.videos) - 1:
         next_video = st.session_state.videos[st.session_state.current_video_idx + 1]
         fetch_video_bytes(GCS_BUCKET_NAME, next_video['gcs_path'])
 
-    # =========================================================================
-    # Annotation Form (model predictions skipped for GCS streaming)
-    # =========================================================================
-    predictions = {}
-    st.divider()
-    render_annotation_form(video_id, predictions)
+    with form_col:
+        predictions = {}
+        render_annotation_form(video_id, predictions)
 
 
 # =============================================================================

@@ -22,6 +22,9 @@ Pillow>=10.0.0
 # Feature extraction
 scipy>=1.11.0
 
+# Language detection (for metadata filtering)
+langdetect>=1.0.9
+
 # Optional: MediaPipe for gesture/face detection
 # Uncomment if you want gesture/face analysis
 # mediapipe>=0.10.0

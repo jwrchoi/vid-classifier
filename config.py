@@ -14,7 +14,11 @@ Key sections:
 """
 
 from pathlib import Path
-import torch
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 # =============================================================================
 # PATH CONFIGURATION - UPDATE THESE TO MATCH YOUR SETUP
@@ -52,10 +56,10 @@ ANNOTATIONS_FILE = OUTPUT_DIR / "annotations.csv"
 
 # Google Cloud Storage bucket and prefix for video files
 GCS_BUCKET_NAME = "vid-classifier-db"
-GCS_VIDEO_PREFIX = "videos/"
+GCS_VIDEO_PREFIX = "videos/01_filtered/"
 
 # Fixed video list for reliability testing (all coders see same 50 videos)
-VIDEO_LIST_FILE = OUTPUT_DIR / "video_list_v1.csv"
+VIDEO_LIST_FILE = OUTPUT_DIR / "video_list_v2.csv"
 
 # =============================================================================
 # DEVICE CONFIGURATION
@@ -71,8 +75,10 @@ def get_device():
     3. CPU - Fallback, slower but always available
 
     Returns:
-        torch.device: The selected compute device
+        torch.device or None: The selected compute device, or None if torch unavailable
     """
+    if torch is None:
+        return None
     # Check for Apple Silicon (M1/M2/M3 chips)
     if torch.backends.mps.is_available():
         return torch.device("mps")
