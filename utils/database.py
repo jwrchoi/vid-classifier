@@ -123,7 +123,7 @@ class AnnotationDatabase:
     ) -> bool:
         """
         Save a single annotation.
-        
+
         Args:
             video_id: Unique video identifier
             filename: Video filename
@@ -134,14 +134,17 @@ class AnnotationDatabase:
             notes: Optional notes
             is_difficult: Flag for difficult cases
             annotation_time_sec: Time spent annotating
-            
+
         Returns:
             True if saved successfully
         """
         try:
             # Load existing annotations
             df = pd.read_csv(self.annotations_file)
-            
+            # Ensure video_id is always string to avoid type mismatches
+            df['video_id'] = df['video_id'].astype(str)
+            video_id = str(video_id)
+
             # Create new row
             new_row = {
                 'video_id': video_id,
@@ -172,23 +175,16 @@ class AnnotationDatabase:
                 'is_difficult': is_difficult,
                 'annotation_time_sec': annotation_time_sec
             }
-            
-            # Check if video already annotated by this annotator (update vs. insert)
-            existing_idx = df[
-                (df['video_id'] == video_id) & (df['annotator'] == annotator)
-            ].index
-            if len(existing_idx) > 0:
-                # Update existing row
-                for col, val in new_row.items():
-                    df.loc[existing_idx[0], col] = val
-            else:
-                # Append new row
-                df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-            
+
+            # Drop all existing rows for this (video_id, annotator) — keeps only the new one
+            df = df[~((df['video_id'] == video_id) & (df['annotator'] == annotator))]
+            # Append new row
+            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+
             # Save
             df.to_csv(self.annotations_file, index=False)
             return True
-            
+
         except Exception as e:
             print(f"Error saving annotation: {e}")
             return False
@@ -206,6 +202,8 @@ class AnnotationDatabase:
         """
         try:
             df = pd.read_csv(self.annotations_file)
+            df['video_id'] = df['video_id'].astype(str)
+            video_id = str(video_id)
             if annotator:
                 row = df[(df['video_id'] == video_id) & (df['annotator'] == annotator)]
             else:
@@ -214,7 +212,7 @@ class AnnotationDatabase:
             if len(row) == 0:
                 return None
 
-            return row.iloc[0].to_dict()
+            return row.iloc[-1].to_dict()
             
         except Exception as e:
             print(f"Error getting annotation: {e}")
@@ -223,7 +221,9 @@ class AnnotationDatabase:
     def get_all_annotations(self) -> pd.DataFrame:
         """Get all annotations as DataFrame."""
         try:
-            return pd.read_csv(self.annotations_file)
+            df = pd.read_csv(self.annotations_file)
+            df['video_id'] = df['video_id'].astype(str)
+            return df
         except Exception as e:
             print(f"Error loading annotations: {e}")
             return pd.DataFrame()
@@ -232,6 +232,7 @@ class AnnotationDatabase:
         """Get set of video IDs that have been annotated, optionally by a specific annotator."""
         try:
             df = pd.read_csv(self.annotations_file)
+            df['video_id'] = df['video_id'].astype(str)
             if annotator:
                 df = df[df['annotator'] == annotator]
             return set(df['video_id'].dropna().unique())
@@ -242,11 +243,13 @@ class AnnotationDatabase:
         """Get annotation statistics, optionally filtered to a single annotator."""
         try:
             df = pd.read_csv(self.annotations_file)
+            df['video_id'] = df['video_id'].astype(str)
 
             if annotator:
                 df = df[df['annotator'] == annotator]
 
-            total = len(df)
+            # Count unique videos, not total rows (avoids inflating with duplicates)
+            total = df['video_id'].nunique()
 
             if total == 0:
                 return {

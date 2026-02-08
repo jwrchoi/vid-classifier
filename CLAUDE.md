@@ -49,7 +49,8 @@ running_shoe_vid_classifier/
 ├── batch_preprocess.py     # Pre-compute predictions (optional)
 ├── requirements.txt        # Dependencies
 ├── docs/
-│   └── session_log_20250207.md  # Session changelog
+│   ├── session_log_20250207.md  # Session changelog
+│   └── session_log_20260208.md  # Duplicate annotation bug fix
 └── data/                   # Created at runtime (GCS FUSE on Cloud Run)
     ├── annotations.csv     # Human annotations output
     └── video_list_v2.csv   # Fixed video list
@@ -117,6 +118,12 @@ python batch_preprocess.py --limit 50
 
 - **Sidebar starts collapsed** despite `initial_sidebar_state="expanded"`. May be a Streamlit version issue or CSS interaction. The collapse button is styled to be always visible.
 - **No concurrent write locking** on the shared CSV. Low risk at current team size but could lose writes if two coders submit at the exact same millisecond.
+
+## Bug Fixes (2026-02-08)
+
+- **Duplicate annotations bug** — `pd.read_csv()` inferred `video_id` as int64, but the app passed it as a string. The type mismatch caused upsert checks to always fail, appending duplicate rows instead of updating. Fixed by casting `video_id` to `str` on every CSV read in `utils/database.py`. Also changed `save_annotation` to delete-then-append (guarantees one row per video per coder) and `get_annotation_stats` to count unique video_ids instead of total rows.
+- **Auto-resume broken** — Same type mismatch caused `get_annotated_video_ids()` to return int IDs that never matched the string IDs in the video list, so coders always started at video #1. Fixed by the same `astype(str)` cast.
+- **Deduped existing data** — Ran one-time dedup on GCS `annotations.csv` (16 → 14 rows, removed 2 Soojin duplicates).
 
 ## Dependencies
 
