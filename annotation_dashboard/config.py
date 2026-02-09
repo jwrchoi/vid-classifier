@@ -24,6 +24,12 @@ except ImportError:
 # PATH CONFIGURATION - UPDATE THESE TO MATCH YOUR SETUP
 # =============================================================================
 
+# Anchor paths relative to this file so they work regardless of CWD.
+# _APP_DIR  = annotation_dashboard/          (where config.py lives)
+# _REPO_ROOT = tiktok_video_analysis/        (parent of annotation_dashboard/)
+_APP_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _APP_DIR.parent
+
 # Directory containing your video files
 # This is where the TikTok videos to be annotated are stored
 # The dashboard will list all videos in this directory
@@ -38,16 +44,25 @@ MODELS_DIR = Path("/Users/roycechoi/proj/tiktok_analysis/codes/artifacts/model_e
 # The app will try each path in order and use the first one that exists
 MODELS_DIR_CANDIDATES = [
     MODELS_DIR,  # Primary path (set above)
-    Path("../tiktok_analysis/codes/artifacts/model_exports/resnet50_models"),
-    Path("models"),
-    Path("../artifacts/model_exports/resnet50_models"),
+    _REPO_ROOT.parent / "tiktok_analysis" / "codes" / "artifacts" / "model_exports" / "resnet50_models",
+    _APP_DIR / "models",
+    _REPO_ROOT / "artifacts" / "model_exports" / "resnet50_models",
     Path.home() / "models" / "resnet50_models",
 ]
 
 # Output directory for annotations and results
 # This is where the CSV files with human annotations will be saved
 # Created automatically if it doesn't exist
-OUTPUT_DIR = Path("data")
+#
+# Path resolution:
+#   - Local monorepo: data/ lives at the repo root (one level above annotation_dashboard/)
+#   - Cloud Run:      data/ is GCS FUSE-mounted as a sibling of app files (/app/data)
+# We check the repo-root location first, then fall back to sibling.
+if (_REPO_ROOT / "data").exists():
+    OUTPUT_DIR = _REPO_ROOT / "data"
+else:
+    OUTPUT_DIR = _APP_DIR / "data"
+
 ANNOTATIONS_FILE = OUTPUT_DIR / "annotations.csv"
 
 # =============================================================================
@@ -58,7 +73,8 @@ ANNOTATIONS_FILE = OUTPUT_DIR / "annotations.csv"
 GCS_BUCKET_NAME = "vid-classifier-db"
 GCS_VIDEO_PREFIX = "videos/01_filtered/"
 
-# Fixed video list for reliability testing (all coders see same 50 videos)
+# Fixed video list for reliability testing (all coders see same 50 videos).
+# This CSV lives in the data directory alongside annotations.
 VIDEO_LIST_FILE = OUTPUT_DIR / "video_list_v2.csv"
 
 # =============================================================================

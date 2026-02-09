@@ -57,13 +57,17 @@ gsutil iam ch "serviceAccount:${SA_EMAIL}:roles/storage.objectAdmin" "gs://${BUC
 # =============================================================================
 # 4. Upload seed data to GCS
 # =============================================================================
+# Resolve the monorepo data/ directory (one level above annotation_dashboard/)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DATA_DIR="${SCRIPT_DIR}/../data"
+
 echo "--- Uploading seed data to GCS ---"
-gsutil cp data/video_list_v2.csv "gs://${BUCKET}/annotations/video_list_v2.csv"
+gsutil cp "${DATA_DIR}/video_list_v2.csv" "gs://${BUCKET}/annotations/video_list_v2.csv"
 
 # Upload annotations.csv only if it doesn't already exist in GCS
 if ! gsutil stat "gs://${BUCKET}/annotations/annotations.csv" 2>/dev/null; then
-    if [ -f data/annotations.csv ]; then
-        gsutil cp data/annotations.csv "gs://${BUCKET}/annotations/annotations.csv"
+    if [ -f "${DATA_DIR}/annotations.csv" ]; then
+        gsutil cp "${DATA_DIR}/annotations.csv" "gs://${BUCKET}/annotations/annotations.csv"
     else
         echo "video_id,filename,annotator,perspective,distance,no_human_visible,notes,is_difficult,annotation_time_sec,timestamp" \
             | gsutil cp - "gs://${BUCKET}/annotations/annotations.csv"
