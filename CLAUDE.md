@@ -42,20 +42,24 @@ tiktok_video_analysis/
 │   │   └── database.py          # CSV annotation storage (per-coder)
 │   ├── scripts/
 │   │   └── build_filtered_video_list.py
-│   ├── batch_preprocess.py      # Pre-compute predictions (optional)
-│   └── docs/                    # Session logs
+│   └── batch_preprocess.py      # Pre-compute predictions (optional)
 │
 ├── feature_extraction/          # CV feature extraction pipeline
 │   ├── extract_all.py           # Orchestrator (downloads from GCS, runs extractors)
 │   ├── config.py                # Pipeline settings (thresholds, paths)
 │   ├── requirements.txt
-│   ├── README.md
+│   ├── docs/
+│   │   └── feature_dict.md     # Feature dictionary (all output columns + equations)
+│   ├── scripts/
+│   │   ├── create_gpu_vm.sh    # Create GCE spot VM with T4 GPU
+│   │   ├── setup_vm.sh         # Clone repo, install deps, verify GPU on VM
+│   │   └── run_extraction.sh   # Run extractors one at a time with checkpointing
 │   └── extractors/
-│       ├── cut_detection.py     # PySceneDetect scene-change detection (working)
-│       ├── density.py           # Visual density: color entropy, edges, motion (stub)
-│       ├── gaze.py              # Face + gaze estimation via MediaPipe/L2CS (stub)
-│       ├── object_detection.py  # YOLOv8 object counting (stub)
-│       └── text_detection.py    # EasyOCR text detection (stub)
+│       ├── cut_detection.py     # PySceneDetect scene-change detection
+│       ├── density.py           # Color entropy, edge density, optical flow
+│       ├── gaze.py              # MediaPipe FaceLandmarker iris-based gaze
+│       ├── object_detection.py  # YOLOv8-nano object counting
+│       └── text_detection.py    # EasyOCR text detection + change pace
 │
 ├── model_training/              # Model fine-tuning (placeholder)
 │   ├── fine_tune_pov.py
@@ -73,6 +77,12 @@ tiktok_video_analysis/
 │   ├── video_list_v2.csv        # Fixed video list
 │   └── features/                # Extracted feature CSVs
 │       └── cuts.csv             # Cut detection output
+│
+├── docs/
+│   └── session_logs/            # Chronological session logs (all sub-projects)
+│       ├── session_log_20250207.md
+│       ├── session_log_20260208.md
+│       └── session_log_20260209.md
 │
 ├── CLAUDE.md                    # This file
 └── .gitignore
