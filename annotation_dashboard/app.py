@@ -603,6 +603,16 @@ def render_instructions():
     Uses st.dialog so the main annotation view stays visible underneath
     and coders can close the dialog to return exactly where they were.
     """
+    # Scroll the dialog container to the top on open.
+    # Without this, Streamlit may focus on the last interactive element
+    # (the Close button) and scroll to the bottom of the dialog.
+    st.html(
+        '<script>requestAnimationFrame(() => {'
+        'const d = document.querySelector("[data-testid=stDialog] [data-testid=stVerticalBlockBorderWrapper]");'
+        'if (d) d.scrollTop = 0;'
+        '});</script>'
+    )
+
     # Try to load instructions from markdown file
     instructions_path = Path(__file__).parent / "coding_instructions.md"
 

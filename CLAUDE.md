@@ -152,15 +152,28 @@ Run `python feature_extraction/extract_all.py` from the monorepo root.
 | Extractor | Status | Key outputs |
 |-----------|--------|-------------|
 | Cut detection | Working | `cut_count`, `cuts_per_second`, `avg_scene_duration` |
-| Density | Stub | `color_entropy`, `edge_density_ratio`, `avg_motion_magnitude` |
-| Gaze | Stub | `num_faces`, `gaze_at_camera_ratio` |
-| Object detection | Stub | `num_objects`, `num_humans`, `object_types` |
-| Text detection | Stub | `has_text`, `text_area_ratio`, `text_changes_per_second` |
+| Density | Working | `color_entropy`, `edge_density_ratio`, `avg_motion_magnitude` |
+| Gaze | Working | `num_faces`, `gaze_at_camera_ratio` |
+| Object detection | Working | `avg_objects`, `num_humans`, `object_types` |
+| Text detection | Working | `has_text`, `text_area_ratio`, `text_changes_per_second` |
+
+See `feature_extraction/docs/feature_dict.md` for full column reference and equations.
+
+## GCE GPU VM
+
+A spot VM (`feature-extraction-gpu`, n1-standard-8 + T4) in `us-central1-a` is available for batch extraction. Currently stopped. Scripts in `feature_extraction/scripts/`.
 
 ## Known Issues
 
 - **Sidebar starts collapsed** despite `initial_sidebar_state="expanded"`. May be a Streamlit version issue or CSS interaction.
 - **No concurrent write locking** on the shared CSV. Low risk at current team size.
+- **Stale annotation data** — Some of Soojin's early annotations have NaN perspective/distance from the form state bug (fixed 2026-02-09). Needs manual review.
+
+## Bug Fixes (2026-02-09)
+
+- **Form state carrying over** — Previous video's selections persisted into next video's form. Fixed with per-video widget keys.
+- **Instructions popup** — "View Instructions" replaced the entire page with no back navigation. Changed to `@st.dialog()` modal with scroll-to-top.
+- **Video download hanging** — `download_as_bytes()` hung without explicit timeout. Added `timeout=60`.
 
 ## Bug Fixes (2026-02-08)
 

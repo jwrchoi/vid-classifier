@@ -146,6 +146,38 @@ bash feature_extraction/scripts/run_extraction.sh
 
 ---
 
+## Part 4: Annotation Dashboard UX Fixes
+
+Coder feedback (in Korean) reported two issues:
+
+### Form state carrying over between videos
+
+**Problem:** When clicking "Save & Next", the previous video's selections persisted into the new video's form. If the previous video was "no human visible", the NA distance propagated and could be accidentally saved on the next video.
+
+**Root cause:** Streamlit widgets use their `key` to persist state across reruns. All videos shared the same implicit keys, so switching videos didn't reset them.
+
+**Fix:** All widget keys now include the video index (`f"perspective_v{idx}"`, `f"distance_v{idx}"`, etc.). When the index changes, Streamlit creates fresh widgets with correct defaults.
+
+**Data impact:** Checked GCS annotations — Soojin has 4 rows with `distance=NaN` and 2 with `perspective=NaN` on videos that are *not* "no human visible", consistent with stale state propagation. These need manual review. The fix prevents this going forward.
+
+### Instructions navigation
+
+**Problem:** "View Instructions" replaced the entire page with no sidebar or back button. Coders had to scroll to the bottom to find "Close".
+
+**Fix (iteration 1):** Changed to `@st.dialog()` modal overlay. But introduced a new bug: `show_instructions` session state flag stayed `True` after closing via the X button, causing the dialog to reopen on every subsequent click.
+
+**Fix (iteration 2):** Removed the `show_instructions` flag entirely. `@st.dialog` manages its own lifecycle — calling `render_instructions()` from the button click opens it, and the X or Close button dismisses it. Also added `st.html` scroll-to-top script so the dialog opens at the beginning of the instructions, not scrolled to the bottom.
+
+### Video download hanging
+
+**Problem:** The video loading spinner spun indefinitely.
+
+**Root cause:** `blob.download_as_bytes()` without an explicit `timeout` parameter could hang in connection retry loops.
+
+**Fix:** Added `timeout=60` to the download call in `utils/gcs.py`.
+
+---
+
 ## Commits
 
 | Hash | Message |
@@ -155,9 +187,14 @@ bash feature_extraction/scripts/run_extraction.sh
 | `bf0aade` | Implement all feature extractors: density, object detection, text, gaze |
 | `358b5a3` | Add checkpointing, disk guard, GPU VM scripts, and feature dictionary |
 | `cbf4d86` | Fix video list CSV parsing to use gcs_path column |
+| `966c254` | Consolidate session logs at project root |
+| `e737dfd` | Fix form state carrying over and instructions navigation |
+| `4121336` | Fix instructions popup reopening and video download hanging |
 
 ## Key files changed
 
+- `annotation_dashboard/app.py` — Per-video widget keys, `@st.dialog` instructions, scroll-to-top
+- `annotation_dashboard/utils/gcs.py` — Download timeout
 - `annotation_dashboard/config.py` — Path resolution logic
 - `annotation_dashboard/deploy.sh` — Seed data upload paths
 - `shared/` — New shared utilities module
@@ -166,9 +203,6 @@ bash feature_extraction/scripts/run_extraction.sh
 - `feature_extraction/config.py` — Settings for all extractors
 - `feature_extraction/docs/feature_dict.md` — Feature dictionary
 - `feature_extraction/scripts/*.sh` — VM creation, setup, and run scripts
+- `docs/session_logs/` — Consolidated session logs from `annotation_dashboard/docs/`
 - `CLAUDE.md` — Updated for monorepo structure
 - `.gitignore` — Added YOLO/ML cache and `.task` model patterns
-
-## Session log consolidation
-
-Moved all session logs from `annotation_dashboard/docs/` to `docs/session_logs/` at the project root. Session logs cover work across the whole monorepo (restructuring, feature extraction, annotation dashboard fixes) and don't belong scoped to a single sub-project. Technical docs (like `feature_dict.md`) stay in their sub-project's `docs/` folder.
