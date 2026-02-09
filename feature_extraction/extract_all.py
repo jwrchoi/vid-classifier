@@ -14,10 +14,14 @@ Usage:
 
     # Specify a local video list CSV instead of scanning GCS:
     python extract_all.py --video-list ../data/video_list_v2.csv
+
+    # Upload results to GCS every 25 videos (for spot VM resilience):
+    python extract_all.py --checkpoint-interval 25
 """
 
 import argparse
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -32,9 +36,13 @@ MONOREPO_ROOT = Path(__file__).resolve().parent.parent
 if str(MONOREPO_ROOT) not in sys.path:
     sys.path.insert(0, str(MONOREPO_ROOT))
 
-from shared.gcs_utils import download_video_to_temp, list_video_blobs  # noqa: E402
+from shared.gcs_utils import download_video_to_temp, list_video_blobs, upload_file_to_gcs  # noqa: E402
 from shared.video_utils import extract_video_id  # noqa: E402
 from shared.config import GCS_BUCKET_NAME, GCS_VIDEO_PREFIX, FEATURES_DIR  # noqa: E402
+
+# Minimum free disk space (in bytes) required before downloading a video.
+# If free space drops below this, the pipeline pauses and warns.
+MIN_FREE_DISK_BYTES = 1_000_000_000  # 1 GB
 
 # ---------------------------------------------------------------------------
 # Registry of available extractors.
@@ -108,11 +116,30 @@ def get_video_list_from_gcs() -> list[dict]:
     ]
 
 
+def _check_disk_space(path: Path = Path("/tmp")) -> int:
+    """Return free disk space in bytes at the given path."""
+    usage = shutil.disk_usage(str(path))
+    return usage.free
+
+
+def _upload_checkpoint(extractor_names: list[str], gcs_prefix: str = "features") -> None:
+    """Upload current CSV files to GCS as a checkpoint."""
+    for name in extractor_names:
+        csv_path = FEATURES_DIR / f"{name}.csv"
+        if csv_path.exists():
+            dest = f"{gcs_prefix}/{name}.csv"
+            try:
+                upload_file_to_gcs(csv_path, dest)
+            except Exception as e:
+                print(f"  [WARN] Checkpoint upload failed for {name}: {e}")
+
+
 def run_extraction(
     extractor_names: list[str],
     video_list: list[dict],
     limit: int | None = None,
     skip_existing: bool = True,
+    checkpoint_interval: int = 0,
 ) -> None:
     """
     Main extraction loop.
@@ -121,10 +148,12 @@ def run_extraction(
     requested extractor, and appends results to per-extractor CSVs.
 
     Args:
-        extractor_names: List of extractor keys to run (e.g. ["cuts"]).
-        video_list:      List of dicts with 'blob_name' and 'video_id'.
-        limit:           Max videos to process (None = all).
-        skip_existing:   If True, skip videos already in the output CSV.
+        extractor_names:     List of extractor keys to run (e.g. ["cuts"]).
+        video_list:          List of dicts with 'blob_name' and 'video_id'.
+        limit:               Max videos to process (None = all).
+        skip_existing:       If True, skip videos already in the output CSV.
+        checkpoint_interval: Upload CSVs to GCS every N videos (0 = disabled).
+                             Useful on spot/preemptible VMs to survive preemption.
     """
     FEATURES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -154,12 +183,25 @@ def run_extraction(
     videos = video_list[:limit] if limit else video_list
     total = len(videos)
 
+    # Count how many are already done (for accurate progress tracking).
+    already_done = sum(
+        1 for v in videos
+        if all(v["video_id"] in existing_ids[n] for n in extractors)
+    )
+
     print(f"\n{'='*60}")
     print(f"Feature Extraction Pipeline")
     print(f"  Extractors : {', '.join(extractors.keys())}")
-    print(f"  Videos     : {total}")
+    print(f"  Videos     : {total} ({already_done} already processed)")
     print(f"  Output dir : {FEATURES_DIR}")
+    if checkpoint_interval > 0:
+        print(f"  Checkpoint : every {checkpoint_interval} videos → GCS")
     print(f"{'='*60}\n")
+
+    success_count = 0
+    fail_count = 0
+    videos_since_checkpoint = 0
+    pipeline_start = time.time()
 
     for i, video in enumerate(videos, 1):
         blob_name = video["blob_name"]
@@ -168,17 +210,42 @@ def run_extraction(
         # Check if all extractors already have this video.
         all_done = all(video_id in existing_ids[n] for n in extractors)
         if skip_existing and all_done:
-            print(f"[{i}/{total}] {video_id} — already processed, skipping.")
             continue
 
-        print(f"[{i}/{total}] {video_id} — downloading...", end=" ", flush=True)
+        # --- Disk space guard ---
+        free_bytes = _check_disk_space()
+        if free_bytes < MIN_FREE_DISK_BYTES:
+            free_gb = free_bytes / (1024 ** 3)
+            print(f"\n[ERROR] Low disk space ({free_gb:.1f} GB free). "
+                  f"Stopping to prevent data corruption.")
+            print(f"  Processed {success_count} videos successfully before stopping.")
+            # Upload what we have before bailing out.
+            if checkpoint_interval > 0:
+                print("  Uploading checkpoint to GCS...")
+                _upload_checkpoint(list(extractors.keys()))
+            return
+
+        # --- Progress with ETA ---
+        processed_so_far = success_count + fail_count
+        remaining = (total - already_done) - processed_so_far
+        elapsed_total = time.time() - pipeline_start
+        if processed_so_far > 0:
+            avg_per_video = elapsed_total / processed_so_far
+            eta_sec = avg_per_video * remaining
+            eta_str = time.strftime("%H:%M:%S", time.gmtime(eta_sec))
+        else:
+            eta_str = "estimating..."
+
+        print(f"[{i}/{total}] {video_id} (remaining: {remaining}, "
+              f"ETA: {eta_str}) — downloading...", end=" ", flush=True)
         t0 = time.time()
 
+        tmp_path = None
         try:
-            # Download video to a local temp file.
             tmp_path = download_video_to_temp(blob_name)
         except Exception as e:
             print(f"DOWNLOAD FAILED: {e}")
+            fail_count += 1
             continue
 
         try:
@@ -189,7 +256,7 @@ def run_extraction(
                 # Run the extractor.
                 features = extract_fn(tmp_path, video_id)
 
-                # Append to CSV.
+                # Append to CSV (immediate flush for checkpoint safety).
                 csv_path = FEATURES_DIR / f"{name}.csv"
                 df_row = pd.DataFrame([features])
                 if csv_path.exists():
@@ -201,18 +268,42 @@ def run_extraction(
 
             elapsed = time.time() - t0
             print(f"done ({elapsed:.1f}s)")
+            success_count += 1
+            videos_since_checkpoint += 1
 
         except Exception as e:
             print(f"EXTRACTION FAILED: {e}")
+            fail_count += 1
 
         finally:
-            # Clean up temp file.
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            # Always clean up the temp file to reclaim disk space.
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
-    print(f"\nDone. Results saved to {FEATURES_DIR}/")
+        # --- Periodic GCS checkpoint ---
+        if (checkpoint_interval > 0
+                and videos_since_checkpoint >= checkpoint_interval):
+            print(f"  >> Checkpointing to GCS ({success_count} videos done)...")
+            _upload_checkpoint(list(extractors.keys()))
+            videos_since_checkpoint = 0
+
+    # Final summary and checkpoint.
+    elapsed_total = time.time() - pipeline_start
+    elapsed_str = time.strftime("%H:%M:%S", time.gmtime(elapsed_total))
+    print(f"\n{'='*60}")
+    print(f"Extraction complete in {elapsed_str}")
+    print(f"  Success: {success_count}  |  Failed: {fail_count}  |  Skipped: {already_done}")
+    print(f"  Results: {FEATURES_DIR}/")
+
+    if checkpoint_interval > 0 and success_count > 0:
+        print(f"  Uploading final results to GCS...")
+        _upload_checkpoint(list(extractors.keys()))
+        print(f"  Uploaded to gs://{GCS_BUCKET_NAME}/features/")
+
+    print(f"{'='*60}")
 
 
 # =============================================================================
@@ -246,6 +337,13 @@ def main():
         action="store_true",
         help="Re-extract features even if video already in output CSV.",
     )
+    parser.add_argument(
+        "--checkpoint-interval",
+        type=int,
+        default=0,
+        help="Upload CSVs to GCS every N videos (0 = disabled). "
+             "Recommended on spot/preemptible VMs for resilience.",
+    )
     args = parser.parse_args()
 
     # Build video list.
@@ -260,6 +358,7 @@ def main():
         video_list=videos,
         limit=args.limit,
         skip_existing=not args.no_skip,
+        checkpoint_interval=args.checkpoint_interval,
     )
 
 
