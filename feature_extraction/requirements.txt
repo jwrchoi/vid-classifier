@@ -1,0 +1,26 @@
+# Feature Extraction Pipeline - Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core
+pandas>=2.0.0
+numpy>=1.24.0
+opencv-python>=4.8.0
+
+# GCS access
+google-cloud-storage>=2.10.0
+google-auth>=2.0.0
+
+# --- Cut detection ---
+scenedetect[opencv]>=0.6.2
+
+# --- Density / Object detection (future) ---
+# ultralytics>=8.0.0          # YOLOv8
+# easyocr>=1.7.0              # Text detection (OCR)
+# scipy>=1.11.0               # Histogram entropy for color complexity
+
+# --- Gaze estimation (future) ---
+# mediapipe>=0.10.0           # Face detection
+# l2cs-net                    # Gaze estimation (or use gaze360)
+
+# --- Utilities ---
+tqdm>=4.65.0                  # Progress bars
