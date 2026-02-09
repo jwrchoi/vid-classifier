@@ -83,6 +83,15 @@ def get_video_list_from_csv(csv_path: Path) -> list[dict]:
     """
     df = pd.read_csv(csv_path)
 
+    # video_list_v2.csv has a 'gcs_path' column with the full blob path.
+    if "gcs_path" in df.columns:
+        records = []
+        for _, row in df.iterrows():
+            blob = row["gcs_path"]
+            vid = str(row.get("video_id", extract_video_id(blob)))
+            records.append({"blob_name": blob, "video_id": vid})
+        return records
+
     # The annotation dashboard's video list has a 'blob_name' column.
     if "blob_name" in df.columns:
         records = []
@@ -102,7 +111,7 @@ def get_video_list_from_csv(csv_path: Path) -> list[dict]:
             for _, row in df.iterrows()
         ]
 
-    raise ValueError(f"CSV {csv_path} must have 'blob_name' or 'video_id' column")
+    raise ValueError(f"CSV {csv_path} must have 'gcs_path', 'blob_name', or 'video_id' column")
 
 
 def get_video_list_from_gcs() -> list[dict]:
