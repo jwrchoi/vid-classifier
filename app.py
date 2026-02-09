@@ -91,7 +91,8 @@ def init_session_state():
         'annotator_name': '',             # Name of the human coder (set at login)
         'model_loader': None,           # ModelLoader instance (or None if no models)
         'db': None,                     # AnnotationDatabase instance
-        'show_instructions': False      # Whether to show coding instructions
+        'show_instructions': False,     # Whether to show coding instructions
+        'save_success': False           # Flag to show success toast after rerun
     }
 
     # Set defaults only for variables that don't already exist
@@ -533,8 +534,12 @@ def render_annotation_form(video_id: str, predictions: dict):
         # Get current video info
         current_video = st.session_state.videos[st.session_state.current_video_idx]
 
-        # Save annotation to database
-        if st.session_state.db:
+        if not st.session_state.db:
+            st.error("Database not initialized. Please refresh the page.")
+            return
+
+        # Save annotation to database (with spinner and retry)
+        with st.spinner("Saving annotation..."):
             success = st.session_state.db.save_annotation(
                 video_id=video_id,
                 filename=current_video['filename'],
@@ -547,18 +552,37 @@ def render_annotation_form(video_id: str, predictions: dict):
                 annotation_time_sec=annotation_time
             )
 
-            if success:
-                st.success("✅ Annotation saved!")
+            # Retry once on failure (transient GCS FUSE errors)
+            if not success:
+                time.sleep(0.5)
+                success = st.session_state.db.save_annotation(
+                    video_id=video_id,
+                    filename=current_video['filename'],
+                    annotations=annotations,
+                    model_predictions=model_preds,
+                    computed_features={},
+                    annotator=st.session_state.annotator_name,
+                    notes=notes,
+                    is_difficult=is_difficult,
+                    annotation_time_sec=annotation_time
+                )
 
-                # Reset the annotation timer
-                st.session_state.annotation_start_time = None
+        if success:
+            # Reset the annotation timer
+            st.session_state.annotation_start_time = None
+            # Flag for toast on next rerun (st.success would vanish on rerun)
+            st.session_state.save_success = True
 
-                # If "Save & Next" was clicked, move to next video
-                if submit_next and st.session_state.current_video_idx < len(st.session_state.videos) - 1:
-                    st.session_state.current_video_idx += 1
-                    st.rerun()
+            # If "Save & Next" was clicked, move to next video
+            if submit_next and st.session_state.current_video_idx < len(st.session_state.videos) - 1:
+                st.session_state.current_video_idx += 1
+                st.rerun()
             else:
-                st.error("❌ Failed to save annotation. Please try again.")
+                # "Save" only — stay on current video, show confirmation now
+                st.success("Annotation saved!")
+                st.session_state.save_success = False
+        else:
+            st.error("Failed to save annotation. Please try again.")
 
 
 def render_instructions():
@@ -707,6 +731,11 @@ def main():
     # =========================================================================
     # Render Main Interface
     # =========================================================================
+
+    # Show save confirmation toast (persists across the rerun triggered by Save & Next)
+    if st.session_state.save_success:
+        st.toast("Annotation saved!")
+        st.session_state.save_success = False
 
     # Render sidebar with navigation
     render_sidebar()

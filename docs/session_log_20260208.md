@@ -65,11 +65,35 @@ Ran one-time dedup on `gs://vid-classifier-db/annotations/annotations.csv`:
 
 ---
 
+## Save & Next Reliability Fix
+
+The coder reported that clicking "Save & Next" sometimes left the video unchanged. Analysis of the form submission handler in `app.py` identified four contributing issues:
+
+| Issue | Impact | Fix |
+|-------|--------|-----|
+| No spinner during save | Coder sees no feedback while GCS FUSE write runs (can take seconds) | Wrapped save call in `st.spinner("Saving annotation...")` |
+| `st.success()` before `st.rerun()` | Success message flashes for a split second then vanishes on rerun | Use `st.session_state.save_success` flag + `st.toast()` after rerun |
+| No retry on GCS failure | Transient GCS FUSE errors cause save to fail; coder must manually retry | Auto-retry once after 0.5s delay |
+| `db is None` silent no-op | If session state is lost, `if st.session_state.db:` skips the entire block with no error | Added explicit `st.error()` and early return |
+
+### Changes in `app.py`
+
+- Added `save_success` to session state defaults
+- Form handler: guard against `db is None` with error message
+- Form handler: `st.spinner("Saving annotation...")` around save call
+- Form handler: single retry on save failure (0.5s delay)
+- Form handler: set `save_success` flag instead of `st.success()` before rerun
+- Form handler: for "Save" only (no advance), show `st.success()` immediately
+- Main render: show `st.toast("Annotation saved!")` when `save_success` flag is set
+
+---
+
 ## Files Modified
 
 | File | Changes |
 |------|---------|
 | `utils/database.py` | `astype(str)` on `video_id` in all read paths; delete-then-append upsert; `nunique()` for stats count |
+| `app.py` | Save & Next: spinner, retry, toast feedback, db-None guard |
 | `CLAUDE.md` | Added bug fix section; updated file tree |
 | `docs/session_log_20260208.md` | Created (this file) |
 

@@ -124,6 +124,7 @@ python batch_preprocess.py --limit 50
 - **Duplicate annotations bug** — `pd.read_csv()` inferred `video_id` as int64, but the app passed it as a string. The type mismatch caused upsert checks to always fail, appending duplicate rows instead of updating. Fixed by casting `video_id` to `str` on every CSV read in `utils/database.py`. Also changed `save_annotation` to delete-then-append (guarantees one row per video per coder) and `get_annotation_stats` to count unique video_ids instead of total rows.
 - **Auto-resume broken** — Same type mismatch caused `get_annotated_video_ids()` to return int IDs that never matched the string IDs in the video list, so coders always started at video #1. Fixed by the same `astype(str)` cast.
 - **Deduped existing data** — Ran one-time dedup on GCS `annotations.csv` (16 → 14 rows, removed 2 Soojin duplicates).
+- **Save & Next reliability** — Added spinner during save, retry on transient GCS failure, toast confirmation that persists across rerun, and explicit error if db is uninitialized. Previously a failed save silently left the video unchanged with no feedback.
 
 ## Dependencies
 
