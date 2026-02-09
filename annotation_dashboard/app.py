@@ -372,8 +372,15 @@ def render_annotation_form(video_id: str, predictions: dict):
 
     # =========================================================================
     # Annotation Form
+    #
+    # Widget keys include the video index so that switching videos resets
+    # all form fields to their defaults (or to the existing annotation).
+    # Without this, Streamlit's widget state persists the previous video's
+    # choices into the new video's form.
     # =========================================================================
-    with st.form(key="annotation_form"):
+    vid_key = f"v{st.session_state.current_video_idx}"
+
+    with st.form(key=f"annotation_form_{vid_key}"):
 
         # ---------------------------------------------------------------------
         # Screener Question: Is there a human visible?
@@ -391,6 +398,7 @@ def render_annotation_form(video_id: str, predictions: dict):
         no_human_visible = st.checkbox(
             "No human visible in this video",
             value=no_human_default,
+            key=f"no_human_{vid_key}",
             help="Check this if the video shows ONLY products, scenery, text, or graphics without any person or body parts visible"
         )
 
@@ -426,6 +434,7 @@ def render_annotation_form(video_id: str, predictions: dict):
             "Select perspective:",
             perspective_opts,
             index=default_p,
+            key=f"perspective_{vid_key}",
             label_visibility="collapsed"
         )
 
@@ -458,6 +467,7 @@ def render_annotation_form(video_id: str, predictions: dict):
                 "Select distance:",
                 distance_opts,
                 index=default_d,
+                key=f"distance_{vid_key}",
                 label_visibility="collapsed"
             )
 
@@ -475,6 +485,7 @@ def render_annotation_form(video_id: str, predictions: dict):
             notes = st.text_input(
                 "Notes (optional)",
                 value=existing.get('notes', '') if existing else '',
+                key=f"notes_{vid_key}",
                 help="Add any notes about this video (e.g., edge cases, uncertainties)"
             )
 
@@ -483,6 +494,7 @@ def render_annotation_form(video_id: str, predictions: dict):
             is_difficult = st.checkbox(
                 "Difficult case",
                 value=existing.get('is_difficult', False) if existing else False,
+                key=f"difficult_{vid_key}",
                 help="Check this if the video was hard to code (for quality review)"
             )
 
@@ -585,15 +597,14 @@ def render_annotation_form(video_id: str, predictions: dict):
             st.error("Failed to save annotation. Please try again.")
 
 
+@st.dialog("Coding Instructions", width="large")
 def render_instructions():
     """
-    Render the coding instructions page.
+    Render the coding instructions as a modal dialog.
 
-    This shows the full coding instructions from coding_instructions.md
-    to help coders understand how to annotate videos consistently.
+    Uses st.dialog so the main annotation view stays visible underneath
+    and coders can close the dialog to return exactly where they were.
     """
-    st.subheader("📖 Coding Instructions")
-
     # Try to load instructions from markdown file
     instructions_path = Path(__file__).parent / "coding_instructions.md"
 
@@ -602,7 +613,6 @@ def render_instructions():
             st.markdown(f.read())
     else:
         # Fallback if file doesn't exist
-        st.warning("Instructions file not found.")
         st.markdown("""
         ## Quick Guide
 
@@ -619,8 +629,7 @@ def render_instructions():
         - NA: Cannot determine or no human visible
         """)
 
-    # Close button
-    if st.button("Close Instructions"):
+    if st.button("Close", use_container_width=True):
         st.session_state.show_instructions = False
         st.rerun()
 
@@ -679,11 +688,10 @@ def main():
         return
 
     # =========================================================================
-    # Show Instructions Page (if requested)
+    # Show Instructions Dialog (if requested)
     # =========================================================================
     if st.session_state.show_instructions:
         render_instructions()
-        return
 
     # =========================================================================
     # One-time Initialization
