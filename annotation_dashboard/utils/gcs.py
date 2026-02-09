@@ -67,4 +67,4 @@ def fetch_video_bytes(bucket_name, blob_name):
     client = get_gcs_client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
-    return blob.download_as_bytes()
+    return blob.download_as_bytes(timeout=60)

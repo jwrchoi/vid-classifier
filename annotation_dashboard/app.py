@@ -91,7 +91,6 @@ def init_session_state():
         'annotator_name': '',             # Name of the human coder (set at login)
         'model_loader': None,           # ModelLoader instance (or None if no models)
         'db': None,                     # AnnotationDatabase instance
-        'show_instructions': False,     # Whether to show coding instructions
         'save_success': False           # Flag to show success toast after rerun
     }
 
@@ -320,11 +319,10 @@ def render_sidebar():
         st.divider()
 
         # =====================================================================
-        # Instructions Toggle
+        # Instructions Dialog
         # =====================================================================
         if st.button("📖 View Instructions", use_container_width=True):
-            st.session_state.show_instructions = not st.session_state.show_instructions
-            st.rerun()
+            render_instructions()
 
 
 def render_video_player(gcs_path: str):
@@ -630,7 +628,6 @@ def render_instructions():
         """)
 
     if st.button("Close", use_container_width=True):
-        st.session_state.show_instructions = False
         st.rerun()
 
 
@@ -686,12 +683,6 @@ def main():
     if not st.session_state.annotator_name:
         render_login()
         return
-
-    # =========================================================================
-    # Show Instructions Dialog (if requested)
-    # =========================================================================
-    if st.session_state.show_instructions:
-        render_instructions()
 
     # =========================================================================
     # One-time Initialization
