@@ -10,17 +10,20 @@ opencv-python>=4.8.0
 google-cloud-storage>=2.10.0
 google-auth>=2.0.0
 
-# --- Cut detection ---
+# Cut detection
 scenedetect[opencv]>=0.6.2
 
-# --- Density / Object detection (future) ---
-# ultralytics>=8.0.0          # YOLOv8
-# easyocr>=1.7.0              # Text detection (OCR)
-# scipy>=1.11.0               # Histogram entropy for color complexity
+# Density (color entropy)
+scipy>=1.11.0
 
-# --- Gaze estimation (future) ---
-# mediapipe>=0.10.0           # Face detection
-# l2cs-net                    # Gaze estimation (or use gaze360)
+# Object detection
+ultralytics>=8.0.0
 
-# --- Utilities ---
-tqdm>=4.65.0                  # Progress bars
+# Text detection (OCR)
+easyocr>=1.7.0
+
+# Gaze estimation (face detection + iris tracking)
+mediapipe>=0.10.0
+
+# Utilities
+tqdm>=4.65.0

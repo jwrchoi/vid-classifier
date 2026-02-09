@@ -42,12 +42,11 @@ from shared.config import GCS_BUCKET_NAME, GCS_VIDEO_PREFIX, FEATURES_DIR  # noq
 # The function signature is:  extract(video_path: Path, video_id: str) -> dict
 # ---------------------------------------------------------------------------
 EXTRACTOR_REGISTRY = {
-    "cuts": ("feature_extraction.extractors.cut_detection", "extract"),
-    # Future extractors — uncomment as they are implemented:
-    # "density":          ("feature_extraction.extractors.density",          "extract"),
-    # "gaze":             ("feature_extraction.extractors.gaze",             "extract"),
-    # "object_detection": ("feature_extraction.extractors.object_detection", "extract"),
-    # "text_detection":   ("feature_extraction.extractors.text_detection",   "extract"),
+    "cuts":             ("feature_extraction.extractors.cut_detection",    "extract"),
+    "density":          ("feature_extraction.extractors.density",          "extract"),
+    "gaze":             ("feature_extraction.extractors.gaze",             "extract"),
+    "object_detection": ("feature_extraction.extractors.object_detection", "extract"),
+    "text_detection":   ("feature_extraction.extractors.text_detection",   "extract"),
 }
 
 
