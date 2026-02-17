@@ -107,3 +107,9 @@ credentials.json
 runs/
 *.engine
 *.task
+
+# -----------------------------------------------------------------------------
+# Active Learning (model training)
+# -----------------------------------------------------------------------------
+model_training/frame_cache/
+model_training/rounds/

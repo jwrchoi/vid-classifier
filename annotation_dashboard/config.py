@@ -77,6 +77,14 @@ GCS_VIDEO_PREFIX = "videos/01_filtered/"
 # This CSV lives in the data directory alongside annotations.
 VIDEO_LIST_FILE = OUTPUT_DIR / "video_list_v2.csv"
 
+# Active-learning queue (written by model_training/active_learning.py).
+# When this file exists the dashboard presents frames in AL-selected order
+# instead of the default shuffled order.
+QUEUE_CSV_PATH = OUTPUT_DIR / "queue.csv"
+
+# Salt used to seed the per-coder shuffle when no AL queue exists.
+QUEUE_SEED_SALT = "v1"
+
 # =============================================================================
 # DEVICE CONFIGURATION
 # =============================================================================
@@ -210,6 +218,9 @@ FRAME_SAMPLE_INTERVAL = 15
 # Prevents memory issues on very long videos
 # 100 frames at 2fps covers ~50 seconds of video
 MAX_FRAMES_PER_VIDEO = 100
+
+# Number of evenly-spaced frames to extract per video for frame-level annotation
+FRAMES_PER_VIDEO = 10
 
 # Video file extensions that the app will recognize
 # Other files in the video directory will be ignored

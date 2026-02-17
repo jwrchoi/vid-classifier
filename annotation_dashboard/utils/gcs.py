@@ -5,11 +5,16 @@ Uses Application Default Credentials (ADC) for authentication.
 Run `gcloud auth application-default login` to set up credentials.
 """
 
+import io
+import tempfile
+
 import streamlit as st
 import google.auth
 from google.cloud import storage
+from PIL import Image
 
-from config import GCS_BUCKET_NAME
+from config import GCS_BUCKET_NAME, FRAMES_PER_VIDEO
+from utils.video_processing import get_representative_frames
 
 
 def get_gcs_client():
@@ -68,3 +73,35 @@ def fetch_video_bytes(bucket_name, blob_name):
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
     return blob.download_as_bytes(timeout=60)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_video_frames(bucket_name, blob_name, num_frames=FRAMES_PER_VIDEO):
+    """
+    Download a video from GCS and extract evenly-spaced frames as PNG bytes.
+
+    Args:
+        bucket_name: GCS bucket name
+        blob_name: Full blob path
+        num_frames: Number of frames to extract
+
+    Returns:
+        List[bytes]: PNG-encoded frames
+    """
+    video_bytes = fetch_video_bytes(bucket_name, blob_name)
+    tmp = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+    try:
+        tmp.write(video_bytes)
+        tmp.flush()
+        tmp.close()
+        frames_np = get_representative_frames(tmp.name, num_frames=num_frames)
+        png_frames = []
+        for frame in frames_np:
+            img = Image.fromarray(frame)
+            buf = io.BytesIO()
+            img.save(buf, format='PNG')
+            png_frames.append(buf.getvalue())
+        return png_frames
+    finally:
+        import os
+        os.unlink(tmp.name)

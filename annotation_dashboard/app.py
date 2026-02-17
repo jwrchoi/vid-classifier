@@ -2,13 +2,15 @@
 Running Shoe Video Classifier - Annotation Dashboard
 =====================================================
 
-A Streamlit-based tool for human coders to annotate TikTok videos
+A Streamlit-based tool for human coders to annotate TikTok video frames
 with perspective (POV) and social distance labels.
 
 IMPORTANT DESIGN DECISIONS:
-- Model predictions are NOT shown to coders to avoid anchoring bias
-- Models run in the background; predictions are saved to CSV for later analysis
-- Only two annotation dimensions: Perspective and Distance (plus screener)
+- Frames are presented in randomized order with NO video grouping
+  to prevent consistency bias (coders cannot anchor on earlier frames
+  from the same video).
+- Model predictions are NOT shown to coders to avoid anchoring bias.
+- If an active-learning queue CSV exists, it determines frame order.
 
 How to run:
     streamlit run app.py
@@ -21,33 +23,35 @@ Purpose: Parasocial interaction research on TikTok content
 # IMPORTS
 # =============================================================================
 
-import streamlit as st          # Web UI framework
-import pandas as pd             # Data handling
-from pathlib import Path        # Cross-platform file paths
-import time                     # For timing annotations
-import sys                      # System utilities
+import streamlit as st
+import pandas as pd
+from pathlib import Path
+import time
+import sys
+import io
 
-# Add project directory to Python path so we can import our modules
-# This is needed because Streamlit runs from the app.py directory
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Import our custom modules
 from config import (
-    OUTPUT_DIR,                     # Where to save annotations
-    DEVICE,                         # PyTorch device (cpu/cuda/mps)
-    MODEL_CONFIGS,                  # Model definitions
-    ACTIVE_MODELS,                  # Which models to use
-    GCS_BUCKET_NAME,                # GCS bucket for videos
-    VIDEO_LIST_FILE,                # Fixed video list CSV
-    find_models_dir,                # Helper to find models directory
-    ensure_output_dir               # Helper to create output directory
+    OUTPUT_DIR,
+    DEVICE,
+    MODEL_CONFIGS,
+    ACTIVE_MODELS,
+    GCS_BUCKET_NAME,
+    VIDEO_LIST_FILE,
+    FRAMES_PER_VIDEO,
+    QUEUE_CSV_PATH,
+    QUEUE_SEED_SALT,
+    find_models_dir,
+    ensure_output_dir,
 )
-from utils.video_processing import extract_video_id  # Extract ID from filename
-from utils.gcs import fetch_video_bytes              # Stream video bytes from GCS
-from utils.database import AnnotationDatabase        # CSV-based annotation storage
+from utils.video_processing import extract_video_id
+from utils.gcs import fetch_video_bytes, fetch_video_frames
+from utils.database import AnnotationDatabase
+from utils.queue import get_effective_queue, find_resume_position
 
 try:
-    from models.model_loader import ModelLoader      # Load and run ResNet models
+    from models.model_loader import ModelLoader
 except ImportError:
     ModelLoader = None
 
@@ -55,13 +59,11 @@ except ImportError:
 # STREAMLIT PAGE CONFIGURATION
 # =============================================================================
 
-# Configure the Streamlit page
-# This must be the first Streamlit command in the script
 st.set_page_config(
-    page_title="Video Annotation Tool",  # Browser tab title
-    page_icon="📹",                       # Browser tab icon
-    layout="wide",                        # Use full screen width
-    initial_sidebar_state="expanded"      # Sidebar starts open
+    page_title="Video Annotation Tool",
+    page_icon="📹",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 # =============================================================================
@@ -69,33 +71,24 @@ st.set_page_config(
 # =============================================================================
 
 def init_session_state():
-    """
-    Initialize Streamlit session state variables.
-
-    Session state persists across reruns of the app (e.g., when user clicks a button).
-    We use it to store:
-    - Which video we're currently viewing
-    - Loaded models and video list
-    - Cached predictions (so we don't recompute)
-    - Database connection
-
-    All variables are initialized with sensible defaults if they don't exist.
-    """
-    # Define all session state variables and their default values
+    """Initialize Streamlit session state variables."""
     defaults = {
-        'initialized': False,           # Has the app finished loading?
-        'current_video_idx': 0,         # Index of current video in list
-        'videos': [],                   # List of all video file info
-        'predictions_cache': {},        # Cached model predictions by video_id
-        'annotation_start_time': None,  # When user started annotating current video
-        'annotator_name': '',             # Name of the human coder (set at login)
-        'model_loader': None,           # ModelLoader instance (or None if no models)
-        'db': None,                     # AnnotationDatabase instance
-        'save_success': False           # Flag to show success toast after rerun
+        'initialized': False,
+        # Queue-based navigation
+        'frame_queue': [],          # list of (video_id, frame_index) tuples
+        'queue_position': 0,        # current index in frame_queue
+        # Caches
+        'frame_cache': {},          # video_id -> list[PNG bytes]
+        'video_by_id': {},          # video_id -> video info dict
+        'videos': [],               # full video list (for reference)
+        'predictions_cache': {},
+        # Annotation state
+        'annotation_start_time': None,
+        'annotator_name': '',
+        'model_loader': None,
+        'db': None,
+        'save_success': False,
     }
-
-    # Set defaults only for variables that don't already exist
-    # (This preserves values across reruns)
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
@@ -107,59 +100,24 @@ def init_session_state():
 
 @st.cache_resource
 def load_models():
-    """
-    Load trained ResNet-50 models for inference.
-
-    The @st.cache_resource decorator means this function only runs once,
-    even if the app reruns. Models stay in memory for fast inference.
-
-    IMPORTANT: Models are used internally to generate predictions that are
-    saved to CSV, but predictions are NOT shown to human coders (to avoid bias).
-
-    Returns:
-        tuple: (ModelLoader instance or None, error message or None)
-    """
-    # Find where the model files are stored
+    """Load trained ResNet-50 models for inference (cached)."""
     models_dir = find_models_dir()
-
-    # Check if the directory exists
     if not models_dir.exists():
         return None, f"Models directory not found: {models_dir}"
-
-    # Create model loader and load all active models
     loader = ModelLoader(models_dir, MODEL_CONFIGS, DEVICE)
     loader.load_all_models(ACTIVE_MODELS)
-
-    # Check if any models were actually loaded
     if not loader.loaded_models:
         return None, "No models loaded (model files may be missing)"
-
     return loader, None
 
 
 def load_video_list():
-    """
-    Load the fixed video list from CSV.
-
-    The CSV is generated by scripts/generate_video_list.py and contains
-    a fixed set of 50 videos that all coders annotate in the same order.
-
-    Returns:
-        tuple: (list of video info dicts, error message or None)
-
-    Each video dict contains:
-        - video_id: Unique identifier
-        - filename: Video filename
-        - gcs_path: Full blob path in GCS
-    """
+    """Load the fixed video list from CSV."""
     if not VIDEO_LIST_FILE.exists():
-        return [], f"Video list not found: {VIDEO_LIST_FILE}. Run scripts/generate_video_list.py first."
-
+        return [], f"Video list not found: {VIDEO_LIST_FILE}."
     df = pd.read_csv(VIDEO_LIST_FILE)
-
     if df.empty:
         return [], "Video list CSV is empty."
-
     videos = []
     for _, row in df.iterrows():
         videos.append({
@@ -167,55 +125,58 @@ def load_video_list():
             'filename': row['filename'],
             'gcs_path': row['gcs_path'],
         })
-
     return videos, None
 
 
 # =============================================================================
-# PREDICTION FUNCTIONS (Internal - not shown to users)
+# PREDICTION HELPERS
 # =============================================================================
 
-def get_predictions_for_video(video_path: str, frames: list) -> dict:
-    """
-    Get model predictions for a video.
-
-    IMPORTANT: These predictions are saved to CSV for later analysis,
-    but are NOT displayed to human coders (to avoid anchoring bias).
-
-    Args:
-        video_path: Path to the video file
-        frames: List of extracted video frames (numpy arrays)
-
-    Returns:
-        dict: Model predictions keyed by model name
-              Each prediction contains: prediction, confidence, model_name, etc.
-    """
-    # Extract video ID for caching
-    video_id = extract_video_id(Path(video_path).name)
-
-    # Check if we already have predictions cached for this video
-    # (Avoids recomputing every time the app reruns)
-    if video_id in st.session_state.predictions_cache:
-        return st.session_state.predictions_cache[video_id]
-
-    # If no model loader, return empty (app can work without models)
+def get_predictions_for_frame(gcs_path: str, frame_png_bytes: bytes) -> dict:
+    """Run models on a single frame. Predictions are saved, NOT shown."""
     if st.session_state.model_loader is None:
         return {}
-
-    # Run each active model on the video frames
-    predictions = {}
     loader = st.session_state.model_loader
-
+    frame_np = _png_to_numpy(frame_png_bytes)
+    predictions = {}
     for model_name in ACTIVE_MODELS:
         if model_name in loader.loaded_models:
-            # predict_video() runs model on all frames and aggregates results
-            result = loader.predict_video(frames, model_name)
+            result = loader.predict_video([frame_np], model_name)
             predictions[model_name] = result
-
-    # Cache predictions for this video
-    st.session_state.predictions_cache[video_id] = predictions
-
     return predictions
+
+
+def _png_to_numpy(png_bytes):
+    """Convert PNG bytes to a numpy array (RGB)."""
+    from PIL import Image
+    import numpy as np
+    img = Image.open(io.BytesIO(png_bytes))
+    return np.array(img)
+
+
+# =============================================================================
+# FRAME LOADING
+# =============================================================================
+
+def ensure_frames_cached(video_id: str):
+    """Load frames for *video_id* into the frame cache if not already there."""
+    if video_id not in st.session_state.frame_cache:
+        video_info = st.session_state.video_by_id.get(video_id)
+        if video_info:
+            frames = fetch_video_frames(GCS_BUCKET_NAME, video_info['gcs_path'])
+            st.session_state.frame_cache[video_id] = frames
+
+
+def prefetch_upcoming(queue, position, lookahead=2):
+    """Warm the Streamlit cache for upcoming video_ids."""
+    seen = set()
+    for i in range(position + 1, min(position + 1 + lookahead * FRAMES_PER_VIDEO, len(queue))):
+        vid_id = queue[i][0]
+        if vid_id not in seen and vid_id not in st.session_state.frame_cache:
+            seen.add(vid_id)
+            video_info = st.session_state.video_by_id.get(vid_id)
+            if video_info:
+                fetch_video_frames(GCS_BUCKET_NAME, video_info['gcs_path'])
 
 
 # =============================================================================
@@ -223,18 +184,7 @@ def get_predictions_for_video(video_path: str, frames: list) -> dict:
 # =============================================================================
 
 def render_sidebar():
-    """
-    Render the sidebar with navigation controls and progress tracking.
-
-    The sidebar contains:
-    - Annotator name input (to track who made each annotation)
-    - Progress bar showing how many videos have been annotated
-    - Navigation buttons (Previous, Next)
-    - Jump to specific video number
-    - Link to coding instructions
-    """
-    # Make the sidebar collapse (X) button always visible when the sidebar is open.
-    # Placed here (not at top level) to avoid interfering with initial_sidebar_state.
+    """Render simplified sidebar with queue-based progress and navigation."""
     st.markdown(
         """
         <style>
@@ -248,199 +198,139 @@ def render_sidebar():
     )
 
     with st.sidebar:
-        # =====================================================================
-        # Header
-        # =====================================================================
         st.title("Video Annotation")
         st.caption(f"Logged in as: **{st.session_state.annotator_name}**")
-
         st.divider()
 
-        # =====================================================================
-        # Progress Tracking
-        # =====================================================================
-        if st.session_state.videos:
-            total = len(st.session_state.videos)
-            current = st.session_state.current_video_idx + 1
+        # Progress
+        queue = st.session_state.frame_queue
+        pos = st.session_state.queue_position
+        total = len(queue) if queue else 0
 
-            # Get count of annotated videos from database
-            annotated = 0
+        if total > 0:
+            # Count how many queue items have been annotated
+            annotated_pairs = set()
             if st.session_state.db:
-                stats = st.session_state.db.get_annotation_stats(
-                    annotator=st.session_state.annotator_name
+                annotated_pairs = st.session_state.db.get_all_annotated_pairs(
+                    st.session_state.annotator_name
                 )
-                annotated = stats.get('total_annotated', 0)
+            annotated_count = sum(1 for p in queue if p in annotated_pairs)
 
             st.subheader("Progress")
-
-            # Visual progress bar
-            st.progress(annotated / total if total > 0 else 0)
-
-            # Text progress info
-            st.write(f"**{annotated}** of {total} videos annotated")
-            st.write(f"Currently viewing: #{current}")
+            st.progress(annotated_count / total)
+            st.write(f"**{annotated_count}** / {total} frames annotated")
+            st.write(f"Viewing: Frame {pos + 1} of {total}")
 
         st.divider()
 
-        # =====================================================================
-        # Navigation Controls
-        # =====================================================================
+        # Navigation
         st.subheader("Navigation")
-
-        # Previous/Next buttons side by side
         col1, col2 = st.columns(2)
-
         with col1:
-            # Previous button - go back one video
             if st.button("⬅️ Prev", use_container_width=True):
-                if st.session_state.current_video_idx > 0:
-                    st.session_state.current_video_idx -= 1
-                    st.rerun()  # Refresh the page with new video
-
+                if pos > 0:
+                    st.session_state.queue_position = pos - 1
+                    st.rerun()
         with col2:
-            # Next button - go forward one video
             if st.button("Next ➡️", use_container_width=True):
-                if st.session_state.current_video_idx < len(st.session_state.videos) - 1:
-                    st.session_state.current_video_idx += 1
+                if pos < total - 1:
+                    st.session_state.queue_position = pos + 1
                     st.rerun()
 
-        # Jump to specific video number
-        if st.session_state.videos:
-            video_num = st.number_input(
-                "Go to video #",
+        # Jump to frame
+        if total > 0:
+            frame_num = st.number_input(
+                "Go to frame #",
                 min_value=1,
-                max_value=len(st.session_state.videos),
-                value=st.session_state.current_video_idx + 1
+                max_value=total,
+                value=pos + 1,
             )
             if st.button("Go", use_container_width=True):
-                st.session_state.current_video_idx = video_num - 1
+                st.session_state.queue_position = frame_num - 1
                 st.rerun()
 
         st.divider()
 
-        # =====================================================================
-        # Instructions Dialog
-        # =====================================================================
         if st.button("📖 View Instructions", use_container_width=True):
             render_instructions()
 
 
-def render_video_player(gcs_path: str):
-    """
-    Render the video player by streaming bytes from GCS.
+def render_single_frame(video_id: str, frame_index: int):
+    """Display a single frame — no thumbnails, no video info."""
+    ensure_frames_cached(video_id)
+    frames = st.session_state.frame_cache.get(video_id, [])
+    if not frames:
+        st.error("Could not load frames for this item.")
+        return
+    fi = min(frame_index, len(frames) - 1)
+    st.image(frames[fi], use_container_width=True)
 
-    Args:
-        gcs_path: Full blob path in GCS bucket
-    """
-    with st.spinner("Loading video..."):
-        video_bytes = fetch_video_bytes(GCS_BUCKET_NAME, gcs_path)
-    st.video(video_bytes)
 
-
-def render_annotation_form(video_id: str, predictions: dict):
-    """
-    Render the annotation form for human coders.
-
-    This is the main interface where coders select labels for each video.
-
-    IMPORTANT DESIGN DECISIONS:
-    - Model predictions are NOT shown to coders (to avoid anchoring bias)
-    - Only two main annotation dimensions: Perspective and Distance
-    - "No human visible" checkbox affects which options are available
-    - NA option available for ambiguous cases
-
-    Args:
-        video_id: Unique identifier for this video
-        predictions: Model predictions (used for saving, NOT displayed)
-    """
+def render_annotation_form(video_id: str, predictions: dict, frame_index: int):
+    """Render the annotation form for the current frame."""
     st.subheader("📝 Your Annotation")
 
-    # =========================================================================
-    # Load existing annotation if video was already annotated by this coder
-    # =========================================================================
     existing = None
     if st.session_state.db:
         existing = st.session_state.db.get_annotation(
-            video_id, annotator=st.session_state.annotator_name
+            video_id, annotator=st.session_state.annotator_name,
+            frame_index=frame_index,
         )
 
-    # Start timing how long the annotation takes
     if st.session_state.annotation_start_time is None:
         st.session_state.annotation_start_time = time.time()
 
-    # =========================================================================
-    # Annotation Form
-    #
-    # Widget keys include the video index so that switching videos resets
-    # all form fields to their defaults (or to the existing annotation).
-    # Without this, Streamlit's widget state persists the previous video's
-    # choices into the new video's form.
-    # =========================================================================
-    vid_key = f"v{st.session_state.current_video_idx}"
+    # Widget key based on queue position (unique per frame slot)
+    qpos = st.session_state.queue_position
+    vid_key = f"q{qpos}"
 
     with st.form(key=f"annotation_form_{vid_key}"):
 
-        # ---------------------------------------------------------------------
-        # Screener Question: Is there a human visible?
-        # ---------------------------------------------------------------------
+        # Step 1: Screener
         st.markdown("### Step 1: Screener Question")
-        st.markdown("**Is there a human (or part of a human) visible in this video?**")
+        st.markdown("**Is there a human (or part of a human) visible in this frame?**")
 
-        # Get default value from existing annotation if available
         no_human_default = False
         if existing and existing.get('no_human_visible'):
             no_human_default = bool(existing['no_human_visible'])
 
-        # Checkbox for "No human visible"
-        # When checked, some annotation options become NA automatically
         no_human_visible = st.checkbox(
-            "No human visible in this video",
+            "No human visible in this frame",
             value=no_human_default,
             key=f"no_human_{vid_key}",
-            help="Check this if the video shows ONLY products, scenery, text, or graphics without any person or body parts visible"
+            help="Check this if the frame shows ONLY products, scenery, text, or graphics without any person or body parts visible",
         )
 
         st.divider()
 
-        # ---------------------------------------------------------------------
-        # Main Annotation Questions
-        # ---------------------------------------------------------------------
-        st.markdown("### Step 2: Code the Video")
+        # Step 2: Labels
+        st.markdown("### Step 2: Code the Frame")
 
-        # ---------------------------------------------------------------------
-        # PERSPECTIVE (POV)
-        # ---------------------------------------------------------------------
+        # Perspective
         st.markdown("**Perspective (Point of View)**")
-
         st.caption(
             "• **1st person**: Camera shows YOUR perspective (hands visible, POV shot)\n"
             "• **2nd person**: Subject talks TO YOU (eye contact, direct address)\n"
             "• **3rd person**: You're watching others (documentary style, no direct address)\n"
             "• **NA**: Cannot determine or doesn't apply"
         )
-
         perspective_opts = ['1st person', '2nd person', '3rd person', 'NA']
-
         default_p = 0
         if existing and existing.get('perspective'):
             try:
                 default_p = perspective_opts.index(existing['perspective'])
             except ValueError:
                 pass
-
         perspective = st.radio(
             "Select perspective:",
             perspective_opts,
             index=default_p,
             key=f"perspective_{vid_key}",
-            label_visibility="collapsed"
+            label_visibility="collapsed",
         )
 
-        # ---------------------------------------------------------------------
-        # SOCIAL DISTANCE
-        # ---------------------------------------------------------------------
+        # Distance
         st.markdown("**Social Distance (Camera Proximity)**")
-
         if no_human_visible:
             st.info("↳ Automatically set to NA (no human visible)")
             distance = "NA"
@@ -451,144 +341,116 @@ def render_annotation_form(video_id: str, predictions: dict):
                 "• **Public**: Wide shot, full body, formal/distant feeling\n"
                 "• **NA**: Cannot determine or doesn't apply"
             )
-
             distance_opts = ['Personal', 'Social', 'Public', 'NA']
-
             default_d = 0
             if existing and existing.get('distance'):
                 try:
                     default_d = distance_opts.index(existing['distance'])
                 except ValueError:
                     pass
-
             distance = st.radio(
                 "Select distance:",
                 distance_opts,
                 index=default_d,
                 key=f"distance_{vid_key}",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
             )
 
         st.divider()
 
-        # ---------------------------------------------------------------------
-        # Notes and Difficult Flag
-        # ---------------------------------------------------------------------
+        # Step 3: Notes
         st.markdown("### Step 3: Additional Info (Optional)")
-
         col_notes, col_flag = st.columns([3, 1])
-
         with col_notes:
-            # Free-text notes field
             notes = st.text_input(
                 "Notes (optional)",
                 value=existing.get('notes', '') if existing else '',
                 key=f"notes_{vid_key}",
-                help="Add any notes about this video (e.g., edge cases, uncertainties)"
+                help="Add any notes about this frame",
             )
-
         with col_flag:
-            # Flag for difficult/ambiguous cases
             is_difficult = st.checkbox(
                 "Difficult case",
                 value=existing.get('is_difficult', False) if existing else False,
                 key=f"difficult_{vid_key}",
-                help="Check this if the video was hard to code (for quality review)"
+                help="Check this if the frame was hard to code",
             )
 
         st.divider()
 
-        # ---------------------------------------------------------------------
-        # Submit Buttons
-        # ---------------------------------------------------------------------
         col_btn1, col_btn2, col_spacer = st.columns([1, 1, 2])
-
         with col_btn1:
-            # Save and move to next video
             submit_next = st.form_submit_button(
-                "💾 Save & Next",
-                type="primary",
-                use_container_width=True
+                "💾 Save & Next", type="primary", use_container_width=True,
             )
-
         with col_btn2:
-            # Save but stay on current video
             submit_only = st.form_submit_button(
-                "💾 Save",
-                use_container_width=True
+                "💾 Save", use_container_width=True,
             )
 
-    # =========================================================================
-    # Handle Form Submission
-    # =========================================================================
+    # Handle submission
     if submit_next or submit_only:
-        # Calculate how long the annotation took
         annotation_time = 0
         if st.session_state.annotation_start_time:
             annotation_time = time.time() - st.session_state.annotation_start_time
 
-        # Package up the human annotations
         annotations = {
             'perspective': perspective,
             'distance': distance,
-            'no_human_visible': no_human_visible
+            'no_human_visible': no_human_visible,
         }
 
-        # Package up model predictions (for saving, not showing)
-        # This allows us to compare human vs model labels later
         model_preds = {
             'perspective': predictions.get('pov_multi', {}),
-            'distance': predictions.get('social_distance_multi', {})
+            'distance': predictions.get('social_distance_multi', {}),
         }
 
-        # Get current video info
-        current_video = st.session_state.videos[st.session_state.current_video_idx]
+        video_info = st.session_state.video_by_id.get(video_id, {})
 
         if not st.session_state.db:
             st.error("Database not initialized. Please refresh the page.")
             return
 
-        # Save annotation to database (with spinner and retry)
         with st.spinner("Saving annotation..."):
             success = st.session_state.db.save_annotation(
                 video_id=video_id,
-                filename=current_video['filename'],
+                filename=video_info.get('filename', ''),
                 annotations=annotations,
                 model_predictions=model_preds,
-                computed_features={},  # Not using computed features in this version
+                computed_features={},
                 annotator=st.session_state.annotator_name,
                 notes=notes,
                 is_difficult=is_difficult,
-                annotation_time_sec=annotation_time
+                annotation_time_sec=annotation_time,
+                frame_index=frame_index,
+                frame_total=FRAMES_PER_VIDEO,
             )
-
-            # Retry once on failure (transient GCS FUSE errors)
             if not success:
                 time.sleep(0.5)
                 success = st.session_state.db.save_annotation(
                     video_id=video_id,
-                    filename=current_video['filename'],
+                    filename=video_info.get('filename', ''),
                     annotations=annotations,
                     model_predictions=model_preds,
                     computed_features={},
                     annotator=st.session_state.annotator_name,
                     notes=notes,
                     is_difficult=is_difficult,
-                    annotation_time_sec=annotation_time
+                    annotation_time_sec=annotation_time,
+                    frame_index=frame_index,
+                    frame_total=FRAMES_PER_VIDEO,
                 )
 
         if success:
-            # Reset the annotation timer
             st.session_state.annotation_start_time = None
-            # Flag for toast on next rerun (st.success would vanish on rerun)
             st.session_state.save_success = True
-
-            # If "Save & Next" was clicked, move to next video
-            if submit_next and st.session_state.current_video_idx < len(st.session_state.videos) - 1:
-                st.session_state.current_video_idx += 1
-                st.rerun()
+            if submit_next:
+                queue = st.session_state.frame_queue
+                pos = st.session_state.queue_position
+                if pos < len(queue) - 1:
+                    st.session_state.queue_position = pos + 1
+                    st.rerun()
             else:
-                # "Save" only — stay on current video, show confirmation now
                 st.success("Annotation saved!")
                 st.session_state.save_success = False
         else:
@@ -597,30 +459,18 @@ def render_annotation_form(video_id: str, predictions: dict):
 
 @st.dialog("Coding Instructions", width="large")
 def render_instructions():
-    """
-    Render the coding instructions as a modal dialog.
-
-    Uses st.dialog so the main annotation view stays visible underneath
-    and coders can close the dialog to return exactly where they were.
-    """
-    # Scroll the dialog container to the top on open.
-    # Without this, Streamlit may focus on the last interactive element
-    # (the Close button) and scroll to the bottom of the dialog.
+    """Render coding instructions as a modal dialog."""
     st.html(
         '<script>requestAnimationFrame(() => {'
         'const d = document.querySelector("[data-testid=stDialog] [data-testid=stVerticalBlockBorderWrapper]");'
         'if (d) d.scrollTop = 0;'
         '});</script>'
     )
-
-    # Try to load instructions from markdown file
     instructions_path = Path(__file__).parent / "coding_instructions.md"
-
     if instructions_path.exists():
         with open(instructions_path, 'r') as f:
             st.markdown(f.read())
     else:
-        # Fallback if file doesn't exist
         st.markdown("""
         ## Quick Guide
 
@@ -636,7 +486,6 @@ def render_instructions():
         - Public: Wide shot, full body
         - NA: Cannot determine or no human visible
         """)
-
     if st.button("Close", use_container_width=True):
         st.rerun()
 
@@ -646,24 +495,16 @@ def render_instructions():
 # =============================================================================
 
 def render_login():
-    """
-    Render a login screen requiring the coder to enter their name.
-
-    Returns:
-        True if logged in, False otherwise.
-    """
+    """Render a login screen requiring the coder to enter their name."""
     st.title("Video Annotation Tool")
     st.markdown("Enter your name to begin annotating.")
-
     name = st.text_input("Your Name", key="login_name_input")
-
     if st.button("Start", type="primary"):
         if name.strip():
             st.session_state.annotator_name = name.strip()
             st.rerun()
         else:
             st.warning("Please enter your name.")
-
     return bool(st.session_state.annotator_name)
 
 
@@ -672,68 +513,57 @@ def render_login():
 # =============================================================================
 
 def main():
-    """
-    Main application entry point.
-
-    This function:
-    1. Initializes session state
-    2. Loads models and videos (on first run)
-    3. Renders the appropriate UI based on current state
-
-    The app flow is:
-    - Initialize -> Load resources -> Show annotation interface
-    - User interacts with form -> Save -> Move to next video
-    """
-    # Initialize session state variables
+    """Main application entry point."""
     init_session_state()
 
-    # =========================================================================
-    # Login Gate — must enter name before proceeding
-    # =========================================================================
+    # Login gate
     if not st.session_state.annotator_name:
         render_login()
         return
 
-    # =========================================================================
-    # One-time Initialization
-    # =========================================================================
+    # One-time initialization
     if not st.session_state.initialized:
 
-        # Load models (runs in background, predictions NOT shown to users)
+        # Load models (optional)
         if ModelLoader is not None:
             with st.spinner("Loading models..."):
                 loader, error = load_models()
                 if error:
-                    # Models are optional - app works without them
                     st.warning(f"⚠️ {error}")
                     st.info("The app will work without models. Predictions won't be saved.")
                 else:
                     st.session_state.model_loader = loader
 
-        # Load video list from CSV
+        # Load video list
         with st.spinner("Loading video list..."):
             videos, error = load_video_list()
-
             if error:
                 st.error(f"❌ {error}")
                 return
-
             st.session_state.videos = videos
+            st.session_state.video_by_id = {v['video_id']: v for v in videos}
 
-        # Create output directory and initialize database
+        # Create output directory and database
         ensure_output_dir()
         st.session_state.db = AnnotationDatabase(OUTPUT_DIR)
 
-        # Resume: jump coder to their first unannotated video
-        annotated_ids = st.session_state.db.get_annotated_video_ids(
-            annotator=st.session_state.annotator_name
-        )
-        for i, v in enumerate(videos):
-            if v['video_id'] not in annotated_ids:
-                st.session_state.current_video_idx = i
-                break
+        # Build queue
+        with st.spinner("Building frame queue..."):
+            queue = get_effective_queue(
+                videos=videos,
+                frames_per_video=FRAMES_PER_VIDEO,
+                annotator=st.session_state.annotator_name,
+                queue_csv_path=QUEUE_CSV_PATH,
+                seed_salt=QUEUE_SEED_SALT,
+            )
+            st.session_state.frame_queue = queue
 
-        # Mark initialization as complete
+            # Resume position
+            annotated_pairs = st.session_state.db.get_all_annotated_pairs(
+                st.session_state.annotator_name
+            )
+            st.session_state.queue_position = find_resume_position(queue, annotated_pairs)
+
         st.session_state.initialized = True
         st.rerun()
 
@@ -741,52 +571,50 @@ def main():
     # Render Main Interface
     # =========================================================================
 
-    # Show save confirmation toast (persists across the rerun triggered by Save & Next)
     if st.session_state.save_success:
         st.toast("Annotation saved!")
         st.session_state.save_success = False
 
-    # Render sidebar with navigation
     render_sidebar()
 
-    # Check if we have videos to show
-    if not st.session_state.videos:
-        st.warning("No videos loaded. Please check the video directory path.")
+    queue = st.session_state.frame_queue
+    if not queue:
+        st.warning("No frames to annotate. Please check the video list.")
         return
 
-    # Get current video info
-    current_video = st.session_state.videos[st.session_state.current_video_idx]
-    video_id = current_video['video_id']
-    gcs_path = current_video['gcs_path']
+    pos = st.session_state.queue_position
+    video_id, frame_index = queue[pos]
 
-    # =========================================================================
-    # Side-by-side layout: Video (left) | Annotation form (right)
-    # Columns stack vertically on narrow screens automatically.
-    # =========================================================================
-    video_col, form_col = st.columns([2, 3])
+    # Side-by-side layout
+    frame_col, form_col = st.columns([2, 3])
 
-    with video_col:
-        st.subheader(f"Video #{st.session_state.current_video_idx + 1}")
-        st.caption(f"File: {current_video['filename']}")
+    with frame_col:
+        st.subheader(f"Frame {pos + 1} of {len(queue)}")
 
-        # Check if already annotated by this coder
+        # Show if already annotated
         if st.session_state.db:
             existing = st.session_state.db.get_annotation(
-                video_id, annotator=st.session_state.annotator_name
+                video_id, annotator=st.session_state.annotator_name,
+                frame_index=frame_index,
             )
             if existing:
-                st.success("You have already annotated this video.")
+                st.success("You have already annotated this frame.")
 
-        render_video_player(gcs_path)
+        with st.spinner("Loading frame..."):
+            render_single_frame(video_id, frame_index)
 
-    # Prefetch next video in background (warms the cache)
-    if st.session_state.current_video_idx < len(st.session_state.videos) - 1:
-        next_video = st.session_state.videos[st.session_state.current_video_idx + 1]
-        fetch_video_bytes(GCS_BUCKET_NAME, next_video['gcs_path'])
+    # Prefetch upcoming video frames
+    prefetch_upcoming(queue, pos)
 
     with form_col:
         predictions = {}
-        render_annotation_form(video_id, predictions)
+        frames = st.session_state.frame_cache.get(video_id, [])
+        if st.session_state.model_loader and frames and frame_index < len(frames):
+            predictions = get_predictions_for_frame(
+                st.session_state.video_by_id[video_id]['gcs_path'],
+                frames[frame_index],
+            )
+        render_annotation_form(video_id, predictions, frame_index=frame_index)
 
 
 # =============================================================================

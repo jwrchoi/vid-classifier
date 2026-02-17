@@ -58,6 +58,8 @@ class AnnotationDatabase:
         if not self.annotations_file.exists():
             df = pd.DataFrame(columns=[
                 'video_id',
+                'frame_index',
+                'frame_total',
                 'filename',
                 'annotator',
                 'timestamp',
@@ -119,7 +121,9 @@ class AnnotationDatabase:
         annotator: str = "default",
         notes: str = "",
         is_difficult: bool = False,
-        annotation_time_sec: float = 0
+        annotation_time_sec: float = 0,
+        frame_index: Optional[int] = None,
+        frame_total: Optional[int] = None
     ) -> bool:
         """
         Save a single annotation.
@@ -148,6 +152,8 @@ class AnnotationDatabase:
             # Create new row
             new_row = {
                 'video_id': video_id,
+                'frame_index': frame_index,
+                'frame_total': frame_total,
                 'filename': filename,
                 'annotator': annotator,
                 'timestamp': datetime.now().isoformat(),
@@ -176,8 +182,20 @@ class AnnotationDatabase:
                 'annotation_time_sec': annotation_time_sec
             }
 
-            # Drop all existing rows for this (video_id, annotator) — keeps only the new one
-            df = df[~((df['video_id'] == video_id) & (df['annotator'] == annotator))]
+            # Drop existing rows for this composite key
+            if frame_index is not None:
+                # Ensure frame_index column is comparable
+                if 'frame_index' in df.columns:
+                    mask = (
+                        (df['video_id'] == video_id)
+                        & (df['frame_index'].astype(float) == float(frame_index))
+                        & (df['annotator'] == annotator)
+                    )
+                else:
+                    mask = pd.Series(False, index=df.index)
+                df = df[~mask]
+            else:
+                df = df[~((df['video_id'] == video_id) & (df['annotator'] == annotator))]
             # Append new row
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
@@ -189,13 +207,14 @@ class AnnotationDatabase:
             print(f"Error saving annotation: {e}")
             return False
     
-    def get_annotation(self, video_id: str, annotator: str = None) -> Optional[Dict]:
+    def get_annotation(self, video_id: str, annotator: str = None, frame_index: Optional[int] = None) -> Optional[Dict]:
         """
-        Get annotation for a specific video, optionally filtered by annotator.
+        Get annotation for a specific video (and optionally frame), filtered by annotator.
 
         Args:
             video_id: Video identifier
             annotator: If provided, only return this annotator's annotation
+            frame_index: If provided, filter to this specific frame
 
         Returns:
             Annotation dict or None if not found
@@ -204,10 +223,12 @@ class AnnotationDatabase:
             df = pd.read_csv(self.annotations_file)
             df['video_id'] = df['video_id'].astype(str)
             video_id = str(video_id)
+            mask = df['video_id'] == video_id
             if annotator:
-                row = df[(df['video_id'] == video_id) & (df['annotator'] == annotator)]
-            else:
-                row = df[df['video_id'] == video_id]
+                mask = mask & (df['annotator'] == annotator)
+            if frame_index is not None and 'frame_index' in df.columns:
+                mask = mask & (df['frame_index'].astype(float) == float(frame_index))
+            row = df[mask]
 
             if len(row) == 0:
                 return None
@@ -239,6 +260,67 @@ class AnnotationDatabase:
         except Exception:
             return set()
     
+    def get_annotated_frame_indices(self, video_id: str, annotator: str) -> set:
+        """Return set of frame indices already annotated for a video by this annotator."""
+        try:
+            df = pd.read_csv(self.annotations_file)
+            df['video_id'] = df['video_id'].astype(str)
+            video_id = str(video_id)
+            mask = (df['video_id'] == video_id) & (df['annotator'] == annotator)
+            if 'frame_index' in df.columns:
+                return set(df.loc[mask, 'frame_index'].dropna().astype(int).tolist())
+            return set()
+        except Exception:
+            return set()
+
+    def is_video_fully_annotated(self, video_id: str, annotator: str, frame_total: int) -> bool:
+        """Check whether all frames of a video have been annotated by this annotator."""
+        annotated = self.get_annotated_frame_indices(video_id, annotator)
+        return len(annotated) >= frame_total
+
+    def get_frame_annotation_summary(self, annotator: str, frame_total: int) -> Dict[str, set]:
+        """
+        Single CSV read returning {video_id: set_of_annotated_frame_indices} for this annotator.
+
+        Used by the sidebar to compute both video-level and frame-level progress efficiently.
+        """
+        try:
+            df = pd.read_csv(self.annotations_file)
+            df['video_id'] = df['video_id'].astype(str)
+            df = df[df['annotator'] == annotator]
+            summary: Dict[str, set] = {}
+            if 'frame_index' not in df.columns:
+                # Legacy rows without frame_index — treat each video_id as having no frame info
+                for vid in df['video_id'].unique():
+                    summary[vid] = set()
+                return summary
+            for vid, group in df.groupby('video_id'):
+                summary[str(vid)] = set(group['frame_index'].dropna().astype(int).tolist())
+            return summary
+        except Exception:
+            return {}
+
+    def get_all_annotated_pairs(self, annotator: str) -> set:
+        """
+        Return the set of (video_id, frame_index) pairs already annotated by *annotator*.
+
+        Used by the queue module to find the resume position efficiently.
+        """
+        try:
+            df = pd.read_csv(self.annotations_file)
+            df['video_id'] = df['video_id'].astype(str)
+            df = df[df['annotator'] == annotator]
+            if 'frame_index' not in df.columns:
+                return set()
+            pairs = set()
+            for _, row in df.iterrows():
+                fi = row['frame_index']
+                if pd.notna(fi):
+                    pairs.add((str(row['video_id']), int(fi)))
+            return pairs
+        except Exception:
+            return set()
+
     def get_annotation_stats(self, annotator: str = None) -> Dict:
         """Get annotation statistics, optionally filtered to a single annotator."""
         try:
@@ -248,18 +330,28 @@ class AnnotationDatabase:
             if annotator:
                 df = df[df['annotator'] == annotator]
 
-            # Count unique videos, not total rows (avoids inflating with duplicates)
+            # Count unique (video_id, frame_index) pairs for frame-level count
+            if 'frame_index' in df.columns and df['frame_index'].notna().any():
+                frame_count = df.dropna(subset=['frame_index']).drop_duplicates(
+                    subset=['video_id', 'frame_index']
+                ).shape[0]
+            else:
+                frame_count = 0
+
+            # Count fully-annotated videos
             total = df['video_id'].nunique()
 
-            if total == 0:
+            if total == 0 and frame_count == 0:
                 return {
                     'total_annotated': 0,
+                    'frame_count': 0,
                     'annotators': [],
                     'difficult_count': 0
                 }
 
             return {
                 'total_annotated': total,
+                'frame_count': frame_count,
                 'annotators': df['annotator'].unique().tolist(),
                 'difficult_count': int(df['is_difficult'].sum()) if 'is_difficult' in df.columns else 0,
                 'avg_time_sec': df['annotation_time_sec'].mean() if 'annotation_time_sec' in df.columns else 0,
