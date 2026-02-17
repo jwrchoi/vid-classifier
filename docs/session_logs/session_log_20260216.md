@@ -58,3 +58,27 @@ python model_training/active_learning.py --round 0 --top-k 50
 # Subsequent rounds
 python model_training/active_learning.py --round 1 --epochs 30
 ```
+
+---
+
+## Feature Extraction: Full Dataset Deployment
+
+### Problem
+Feature extraction was only tested on a 50-video sample. Need to run all 5 extractors against the full 15,231 filtered videos on a GCE GPU VM.
+
+### What was done
+
+- **`shared/config.py`** — Changed `GCS_VIDEO_PREFIX` from `"videos/"` to `"videos/01_filtered/"` to target the curated dataset (filtered against `metadata_final_english.csv`), avoiding duplicates from `00_videos/`.
+- **`feature_extraction/scripts/run_extraction.sh`** — Rewrote for parallel execution. All 5 extractors now launch as concurrent background processes (CPU extractors run alongside the GPU-bound `text_detection`). Dropped `--video-list` flag so the pipeline scans GCS directly. Estimated wall time reduced from ~8 days to ~6.5 days.
+- **`feature_extraction/scripts/create_gpu_vm.sh`** — Switched from spot to standard provisioning. Removed `--provisioning-model=SPOT`, `--instance-termination-action=STOP`, and `--no-restart-on-failure` since a multi-day job on spot would almost certainly get preempted.
+
+### GCS bucket structure
+- `videos/00_videos/` — 18,393 raw downloaded TikTok videos
+- `videos/01_filtered/` — 15,231 videos filtered against English-language metadata
+
+### Deployment steps
+1. Delete old spot VM, recreate as standard
+2. SSH in, run `setup_vm.sh`
+3. Start extraction in tmux: `bash feature_extraction/scripts/run_extraction.sh`
+4. Detach tmux — job runs unattended for ~6.5 days
+5. Monitor via `tail -f data/features/<extractor>.log` or check GCS checkpoints

@@ -25,7 +25,7 @@ BOOT_DISK_SIZE="100GB"
 IMAGE_FAMILY="pytorch-2-7-cu128-ubuntu-2204-nvidia-570"
 IMAGE_PROJECT="deeplearning-platform-release"
 
-echo "Creating spot VM: ${VM_NAME} (${MACHINE_TYPE} + ${GPU_COUNT}x ${GPU_TYPE})"
+echo "Creating VM: ${VM_NAME} (${MACHINE_TYPE} + ${GPU_COUNT}x ${GPU_TYPE})"
 echo "  Project: ${PROJECT}"
 echo "  Zone:    ${ZONE}"
 echo ""
@@ -34,8 +34,6 @@ gcloud compute instances create "${VM_NAME}" \
     --project="${PROJECT}" \
     --zone="${ZONE}" \
     --machine-type="${MACHINE_TYPE}" \
-    --provisioning-model=SPOT \
-    --instance-termination-action=STOP \
     --accelerator="type=${GPU_TYPE},count=${GPU_COUNT}" \
     --maintenance-policy=TERMINATE \
     --boot-disk-size="${BOOT_DISK_SIZE}" \
@@ -43,8 +41,7 @@ gcloud compute instances create "${VM_NAME}" \
     --image-family="${IMAGE_FAMILY}" \
     --image-project="${IMAGE_PROJECT}" \
     --metadata=install-nvidia-driver=True \
-    --scopes=storage-full \
-    --no-restart-on-failure
+    --scopes=storage-full
 
 echo ""
 echo "VM created. To SSH in:"

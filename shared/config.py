@@ -16,8 +16,8 @@ from pathlib import Path
 # The same bucket is used by all sub-projects.
 GCS_BUCKET_NAME = "vid-classifier-db"
 
-# Prefix (folder path) where the raw TikTok video files live inside the bucket.
-GCS_VIDEO_PREFIX = "videos/"
+# Prefix (folder path) where the filtered TikTok video files live inside the bucket.
+GCS_VIDEO_PREFIX = "videos/01_filtered/"
 
 # Prefix where extracted feature CSVs are stored.
 GCS_FEATURES_PREFIX = "features/"
