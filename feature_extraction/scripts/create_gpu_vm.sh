@@ -16,7 +16,7 @@
 set -euo pipefail
 
 PROJECT="vid-classifier"
-ZONE="us-central1-a"
+ZONE="${ZONE:-us-central1-a}"
 VM_NAME="feature-extraction-gpu"
 MACHINE_TYPE="n1-standard-8"  # 8 vCPU, 30 GB RAM — headroom for EasyOCR + YOLO
 GPU_TYPE="nvidia-tesla-t4"

@@ -84,6 +84,9 @@ Feature extraction was only tested on a 50-video sample. Need to run all 5 extra
 - `videos/00_videos/` — 18,393 raw downloaded TikTok videos
 - `videos/01_filtered/` — 15,231 videos filtered against English-language metadata
 
+### Additional changes
+- **`create_gpu_vm.sh`** — Made `ZONE` configurable via environment variable (`ZONE="${ZONE:-us-central1-a}"`) so you can try different zones when T4 GPUs are exhausted: `ZONE=us-east1-c bash feature_extraction/scripts/create_gpu_vm.sh`
+
 ### Deployment steps
 1. Delete old spot VM, recreate as standard
 2. SSH in, run `setup_vm.sh`
