@@ -585,6 +585,11 @@ def main():
     pos = st.session_state.queue_position
     video_id, frame_index = queue[pos]
 
+    # Load frames BEFORE creating columns so the GCS download doesn't
+    # block the right column (annotation form) from rendering.
+    with st.spinner("Loading frame..."):
+        ensure_frames_cached(video_id)
+
     # Side-by-side layout
     frame_col, form_col = st.columns([2, 3])
 
@@ -600,11 +605,7 @@ def main():
             if existing:
                 st.success("You have already annotated this frame.")
 
-        with st.spinner("Loading frame..."):
-            render_single_frame(video_id, frame_index)
-
-    # Prefetch upcoming video frames
-    prefetch_upcoming(queue, pos)
+        render_single_frame(video_id, frame_index)
 
     with form_col:
         predictions = {}
@@ -615,6 +616,9 @@ def main():
                 frames[frame_index],
             )
         render_annotation_form(video_id, predictions, frame_index=frame_index)
+
+    # Prefetch upcoming video frames AFTER both columns have rendered
+    prefetch_upcoming(queue, pos)
 
 
 # =============================================================================

@@ -46,6 +46,14 @@
 - **Combined entropy**: Uncertain on either POV or distance = informative frame.
 - **Stopping criteria**: Built into the orchestrator — flags diminishing returns (<1% F1 improvement) and overfitting (>15% train-val gap).
 
+### Bug fix: Frame and annotation form not rendering together
+
+On first load, the annotation form (right column) didn't appear — only the frame showed. After clicking Prev/Next, the form appeared but the frame disappeared.
+
+**Root cause**: Streamlit streams elements to the browser as the script executes line-by-line. The GCS frame download was blocking *inside* the left column context, so the right column (form) hadn't been sent to the browser yet. Additionally, `prefetch_upcoming` was placed *between* the two column blocks, adding a second blocking GCS download before the form could render.
+
+**Fix**: Moved the frame download (`ensure_frames_cached`) *before* `st.columns()` so both columns render instantly once the download completes. Moved `prefetch_upcoming` to *after* both columns so the UI is fully visible before any background prefetching starts.
+
 ### Usage
 
 ```bash
