@@ -227,7 +227,7 @@ class AnnotationDatabase:
             if annotator:
                 mask = mask & (df['annotator'] == annotator)
             if frame_index is not None and 'frame_index' in df.columns:
-                mask = mask & (df['frame_index'].astype(float) == float(frame_index))
+                mask = mask & (df['frame_index'].notna()) & (df['frame_index'].astype(float) == float(frame_index))
             row = df[mask]
 
             if len(row) == 0:
@@ -464,6 +464,30 @@ class AnnotationDatabase:
         
         return backup_path
     
+    def purge_legacy_rows(self) -> int:
+        """Remove legacy rows where frame_index is NaN (pre-frame-level annotations).
+
+        Creates a backup before modifying the CSV.
+
+        Returns:
+            Number of rows removed.
+        """
+        try:
+            df = pd.read_csv(self.annotations_file)
+            if 'frame_index' not in df.columns:
+                return 0
+            legacy_mask = df['frame_index'].isna()
+            n_legacy = int(legacy_mask.sum())
+            if n_legacy == 0:
+                return 0
+            self.create_backup()
+            df = df[~legacy_mask]
+            df.to_csv(self.annotations_file, index=False)
+            return n_legacy
+        except Exception as e:
+            print(f"Error purging legacy rows: {e}")
+            return 0
+
     def get_disagreements(self) -> pd.DataFrame:
         """
         Find cases where human annotation disagrees with model.

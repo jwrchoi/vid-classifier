@@ -332,29 +332,30 @@ def render_annotation_form(video_id: str, predictions: dict, frame_index: int):
         # Distance
         st.markdown("**Social Distance (Camera Proximity)**")
         if no_human_visible:
-            st.info("↳ Automatically set to NA (no human visible)")
-            distance = "NA"
-        else:
-            st.caption(
-                "• **Personal**: Close-up, face fills frame, intimate feeling\n"
-                "• **Social**: Conversational distance, head-and-shoulders\n"
-                "• **Public**: Wide shot, full body, formal/distant feeling\n"
-                "• **NA**: Cannot determine or doesn't apply"
-            )
-            distance_opts = ['Personal', 'Social', 'Public', 'NA']
-            default_d = 0
-            if existing and existing.get('distance'):
-                try:
-                    default_d = distance_opts.index(existing['distance'])
-                except ValueError:
-                    pass
-            distance = st.radio(
-                "Select distance:",
-                distance_opts,
-                index=default_d,
-                key=f"distance_{vid_key}",
-                label_visibility="collapsed",
-            )
+            st.caption("↳ Will be saved as NA because \"No human visible\" is checked. "
+                       "Uncheck the box above and re-submit to choose a different value.")
+        st.caption(
+            "• **Personal**: Close-up, face fills frame, intimate feeling\n"
+            "• **Social**: Conversational distance, head-and-shoulders\n"
+            "• **Public**: Wide shot, full body, formal/distant feeling\n"
+            "• **NA**: Cannot determine or doesn't apply"
+        )
+        distance_opts = ['Personal', 'Social', 'Public', 'NA']
+        default_d = 0
+        if no_human_visible:
+            default_d = distance_opts.index('NA')
+        elif existing and existing.get('distance'):
+            try:
+                default_d = distance_opts.index(existing['distance'])
+            except ValueError:
+                pass
+        distance = st.radio(
+            "Select distance:",
+            distance_opts,
+            index=default_d,
+            key=f"distance_{vid_key}",
+            label_visibility="collapsed",
+        )
 
         st.divider()
 
@@ -396,7 +397,7 @@ def render_annotation_form(video_id: str, predictions: dict, frame_index: int):
 
         annotations = {
             'perspective': perspective,
-            'distance': distance,
+            'distance': 'NA' if no_human_visible else distance,
             'no_human_visible': no_human_visible,
         }
 
@@ -547,6 +548,11 @@ def main():
         ensure_output_dir()
         st.session_state.db = AnnotationDatabase(OUTPUT_DIR)
 
+        # Purge legacy video-level rows (frame_index=NaN) once per session
+        n_purged = st.session_state.db.purge_legacy_rows()
+        if n_purged:
+            st.info(f"Cleaned up {n_purged} legacy annotation(s). A backup was created.")
+
         # Build queue
         with st.spinner("Building frame queue..."):
             queue = get_effective_queue(
@@ -603,7 +609,7 @@ def main():
                 frame_index=frame_index,
             )
             if existing:
-                st.success("You have already annotated this frame.")
+                st.info("You've annotated this frame. You can update your response below.")
 
         render_single_frame(video_id, frame_index)
 

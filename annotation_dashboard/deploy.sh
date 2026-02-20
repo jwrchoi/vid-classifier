@@ -81,7 +81,7 @@ fi
 # 5. Build container image
 # =============================================================================
 echo "--- Building container image ---"
-gcloud builds submit \
+gcloud builds submit "${SCRIPT_DIR}" \
     --tag="${IMAGE}" \
     --project="${PROJECT}"
 
