@@ -51,9 +51,10 @@ def generate_shuffled_queue(
 
 def load_queue_csv(queue_path: Path) -> List[Tuple[str, int]]:
     """
-    Read a queue CSV produced by the active-learning pipeline.
+    Read a queue CSV produced by the active-learning pipeline or ICR scripts.
 
     Expected columns: video_id, frame_index  (round and uncertainty_score optional).
+    Duplicate (video_id, frame_index) rows are silently dropped.
 
     Returns:
         List of (video_id, frame_index) tuples in file order.
@@ -61,6 +62,7 @@ def load_queue_csv(queue_path: Path) -> List[Tuple[str, int]]:
     df = pd.read_csv(queue_path)
     df["video_id"] = df["video_id"].astype(str)
     df["frame_index"] = df["frame_index"].astype(int)
+    df = df.drop_duplicates(subset=["video_id", "frame_index"])
     return list(zip(df["video_id"], df["frame_index"]))
 
 
@@ -74,9 +76,16 @@ def get_effective_queue(
     """
     Return the frame queue to present.
 
-    If *queue_csv_path* exists, load it (active-learning selected frames).
-    Otherwise, generate a shuffled queue from the full video list.
+    Priority:
+      1. queue_{Annotator}.csv  — per-coder queue (ICR or custom override).
+         The annotator name is title-cased for the filename lookup so that
+         "soojin" and "Soojin" both resolve to queue_Soojin.csv.
+      2. queue.csv              — global queue (active-learning or shared ICR).
+      3. Shuffled full queue    — generated from the video list.
     """
+    coder_queue_path = queue_csv_path.parent / f"queue_{annotator.title()}.csv"
+    if coder_queue_path.exists():
+        return load_queue_csv(coder_queue_path)
     if queue_csv_path.exists():
         return load_queue_csv(queue_csv_path)
     return generate_shuffled_queue(videos, frames_per_video, annotator, seed_salt)

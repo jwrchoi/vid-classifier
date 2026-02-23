@@ -280,6 +280,22 @@ def render_annotation_form(video_id: str, predictions: dict, frame_index: int):
     if st.session_state.annotation_start_time is None:
         st.session_state.annotation_start_time = time.time()
 
+    # Warn if the existing annotation for this frame has blank fields
+    if existing:
+        no_human = str(existing.get('no_human_visible', 'False')).strip().lower() == 'true'
+        if not no_human:
+            persp_blank = not existing.get('perspective', '').strip()
+            dist_blank  = not existing.get('distance', '').strip()
+            if persp_blank or dist_blank:
+                missing = ([" Perspective"] if persp_blank else []) + \
+                          (["Social Distance"] if dist_blank else [])
+                st.warning(
+                    f"⚠️ Your previous save for this frame was incomplete — "
+                    f"**{' and '.join(missing)}** "
+                    f"{'is' if len(missing) == 1 else 'are'} missing. "
+                    f"Please fill in all fields and save again."
+                )
+
     # Widget key based on queue position (unique per frame slot)
     qpos = st.session_state.queue_position
     vid_key = f"q{qpos}"
