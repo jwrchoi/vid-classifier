@@ -284,8 +284,8 @@ def render_annotation_form(video_id: str, predictions: dict, frame_index: int):
     if existing:
         no_human = str(existing.get('no_human_visible', 'False')).strip().lower() == 'true'
         if not no_human:
-            persp_blank = not existing.get('perspective', '').strip()
-            dist_blank  = not existing.get('distance', '').strip()
+            persp_blank = not str(existing.get('perspective') or '').strip()
+            dist_blank  = not str(existing.get('distance') or '').strip()
             if persp_blank or dist_blank:
                 missing = ([" Perspective"] if persp_blank else []) + \
                           (["Social Distance"] if dist_blank else [])
