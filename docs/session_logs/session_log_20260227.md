@@ -119,11 +119,57 @@ Follows the reference notebook style (statsmodels OLS, Patsy formulas, HC3 robus
 
 ---
 
+---
+
+## Part 5: `analysis/02_modeling.ipynb` — Interactions, GBM, LASSO (Sections 8–10)
+
+### Section 8 — OLS Interaction Terms
+
+8 theoretically motivated pairs screened on `log_views`; 4 significant at p < .05:
+
+| Interaction | β (log_views) | Key finding |
+|---|---|---|
+| `gaze_at_camera_ratio × num_faces` | +0.098* | Strongest cross-DV finding: β = +0.21*** for shares, +0.19*** for bookmarks — direct gaze drives saves/shares specifically |
+| `cuts_per_second × avg_motion_magnitude` | −0.047* | Kinetic overload; significant for likes and bookmarks too |
+| `color_entropy × edge_density_ratio` | −0.044* | Compounding visual complexity is negative; uniquely significant for comments** |
+| `text_area_ratio × cuts_per_second` | −0.039* | Information overload; significant for bookmarks* |
+
+Adj. R² gains modest (+0.0007 for log_views; +0.0017 for shares and bookmarks).
+Exported: `analysis/model_exports/ols_interactions.{csv,html,tex}`
+
+### Section 9 — Gradient Boosting Machine (GBM)
+
+| Model | R² |
+|---|---|
+| RF visual-only (CV) | 0.008 |
+| GBM visual-only (CV) | 0.035 |
+| OLS visual + controls (adj.) | 0.363 |
+| GBM visual + controls (CV) | 0.447 |
+
+- GBM extracts 4.5× more signal from visual features than RF — signal is non-linear/interactive
+- GBM with controls outperforms OLS by ~0.08 R² — confirms genuine non-linearity
+- Permutation importance: `log_creator_followers` dominates (0.216); visual features with positive importance: `text_changes_per_second` > `edge_density_ratio` > `avg_motion_magnitude` > `avg_objects`
+- Features with negative permutation importance (overfit/context-dependent): `num_faces`, `gaze_at_camera_ratio`, `text_area_ratio`, `cuts_per_second`, `has_text`, `color_entropy`
+
+### Section 10 — LASSO & Model Comparison
+
+- LASSO α = 0.0012; train R² = 0.341; all 19 features survive regularization → none redundant enough to zero out
+- `log_creator_followers` LASSO coef = 1.34 (dominant); top visual coef: `text_changes_per_second` (+0.088), `edge_density_ratio` (+0.053), `avg_motion_magnitude` (+0.038)
+
+### Alternative Approaches (documented in Section 10c)
+
+Described with implementation notes: Linear Mixed Model (creator as random effect), Negative Binomial on raw counts, Quantile regression (75th/90th percentile), Two-stage Heckman, LightGBM/XGBoost, Time-series CV.
+
+Recommended next steps: LMM with creator random effect; quantile regression at 75th/90th; GBM 2D PDP on top interaction.
+
+---
+
 ## Files Changed
 
 | File | Change |
 |------|--------|
 | `analysis/build_merged_dataset.py` | New — merges 5 feature CSVs + metadata; parses channel JSON, timestamps, brand |
 | `analysis/01_eda.ipynb` | New — 7-section EDA notebook (gitignored, run locally) |
-| `analysis/02_modeling.ipynb` | New — OLS + RF modeling notebook following reference style (gitignored, run locally) |
-| `analysis/model_exports/ols_results.{csv,html,tex}` | New — exported regression tables |
+| `analysis/02_modeling.ipynb` | New — OLS + RF + interactions + GBM + LASSO (gitignored, run locally) |
+| `analysis/model_exports/ols_results.{csv,html,tex}` | New — baseline OLS regression tables |
+| `analysis/model_exports/ols_interactions.{csv,html,tex}` | New — interaction model regression tables |
