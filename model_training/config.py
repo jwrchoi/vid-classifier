@@ -16,6 +16,9 @@ _REPO_ROOT = _TRAINING_DIR.parent
 # Round outputs (models, metrics, queue CSVs)
 ROUNDS_DIR = _TRAINING_DIR / "rounds"
 
+# V8 fine-tuned model outputs
+V8_OUTPUT_DIR = ROUNDS_DIR / "v8"
+
 # Local frame PNG cache (large, gitignored)
 FRAME_CACHE_DIR = _TRAINING_DIR / "frame_cache"
 
