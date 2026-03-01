@@ -126,3 +126,79 @@ Of the 18 distance disagreements, 12 are Soojin's blank annotations from the leg
 - `model_training/batch_inference.py` — **New** — Parallel inference on 15K videos
 - `model_training/scripts/run_inference.sh` — **New** — GCE VM orchestration script
 - `docs/session_logs/session_log_20260301.md` — This file
+
+---
+
+## Part 4: Modeling Notebook — Interactions, GBM PDPs, Alternative Count Models
+
+Extended `analysis/02_modeling.ipynb` with focal interaction analysis, GBM partial dependence plots, and Negative Binomial / Poisson regressions.
+
+### Removed `log_bookmarks` as a DV
+
+All models now predict 4 outcomes: views, likes, comments, shares. Bookmarks dropped per research decision.
+
+### Section 8a–b: Focal three-way interactions (theory-driven)
+
+Tested all combinations of **color_entropy × avg_objects × C**, where C is:
+1. `text_area_ratio` (text size)
+2. `text_changes_per_second` (text pace)
+3. `gaze_at_camera_ratio` (parasocial cue)
+
+`has_text` was excluded — redundant with the continuous text measures, which are already 0 when no text is present.
+
+Each model includes all lower-order two-way terms + the three-way term, fitted across all 4 DVs (12 models total). Results compiled and exported to:
+- `analysis/focal_interactions_full.csv` (48 rows, every term × DV)
+- `analysis/focal_interactions_pivot.csv` (12 rows, pivoted by DV)
+
+**Key finding:** `color_entropy × avg_objects × text_area_ratio` is the only significant three-way term (p = .042 for views). Negative coefficient = "visual overload" penalty when all three are simultaneously high. The two-way `color_entropy × text_area_ratio` is more consistently significant across DVs.
+
+### Section 8b-ii: Simple slopes plots
+
+Added simple slopes visualization for all significant (p < .05) focal interaction terms:
+- **Two-way**: effect of predictor A at -1 SD, mean, +1 SD of predictor B
+- **Three-way**: three panels showing how the A×B slope changes at low/mean/high C
+
+### Section 8b-iii: OLS interaction export
+
+Full model output (all coefficients including controls) exported to:
+- `analysis/model_exports/ols_interactions.csv/html/tex` — focal interaction models (408 rows)
+- `analysis/model_exports/ols_pairwise_interactions.csv/html/tex` — data-driven pairwise interactions (separate file, no longer overwrites focal)
+
+### Section 8c–f: Data-driven pairwise screening (relabeled)
+
+Existing pairwise interaction screening (gaze × num_faces, etc.) preserved but renumbered from 8a→8c through 8d→8f to come after the focal interactions.
+
+### Section 9e: 2D GBM Partial Dependence plots
+
+Contour heatmaps for 5 focal pairs: color_entropy × avg_objects, color_entropy × gaze, color_entropy × text_area_ratio, color_entropy × text_changes_per_second, avg_objects × gaze.
+
+### Section 9f: 3-Way GBM Partial Dependence (sliced contours)
+
+For each of the 3 focal triples, the third variable is sliced at Q25/Q50/Q75 and a 2D PDP contour is drawn at each slice. Shows how the interaction surface shifts across levels of the third variable.
+
+### Section 11: Alternative count models (NB, Poisson)
+
+- **11a**: Overdispersion diagnostics — var/mean ratios are extreme (views: 9.4M, likes: 773K)
+- **11b**: Poisson vs NB for views — Poisson emphatically rejected (AIC 12.6B vs NB 334K)
+- **11c**: Log-OLS vs NB coefficient comparison — all directions agree; NB additionally finds `has_text` significant (p = .02)
+- **11d**: NB for all 4 DVs — NB preferred for views/likes/comments; shares failed to converge (24% zeros, may need ZINB)
+- **11e**: Guidance — log-OLS defensible as primary spec when NB gives same substantive story; report NB as robustness check
+
+### Model comparison (Section 10b)
+
+| Model | Metric | Value |
+|-------|--------|-------|
+| OLS (visual + controls) | adj. R² | 0.3615 |
+| OLS (+ interactions) | adj. R² | 0.3623 |
+| GBM (visual + controls) | CV R² | 0.4449 |
+| LASSO (visual + controls) | train R² | 0.3398 |
+
+---
+
+## Key files changed/created (Part 4)
+
+- `analysis/02_modeling.ipynb` — Extended with Sections 8a–b (focal interactions + simple slopes + export), 9e–f (2D/3D PDPs), 11a–e (NB/Poisson)
+- `analysis/model_exports/ols_interactions.csv/html/tex` — **New** — Focal interaction OLS results
+- `analysis/model_exports/ols_pairwise_interactions.csv/html/tex` — **New** — Data-driven pairwise interaction results (renamed from ols_interactions)
+- `analysis/focal_interactions_full.csv` — **New** — All focal interaction terms × DVs
+- `analysis/focal_interactions_pivot.csv` — **New** — Pivoted summary by DV
